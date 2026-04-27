@@ -42,3 +42,8 @@
 - MQTT 连接与命令收发
 - GPIO/PWM/I2C/SPI/UART/1-Wire/Touch 驱动
 - 传感器采集与数字输入监控
+
+
+git tag v2.1.0
+git push origin v2.1.0
+
