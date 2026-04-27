@@ -10,11 +10,17 @@ static DeviceEntry devices[DC_MAX_DEVICES];
 static int devCount = 0;
 static PendingMsg pending[DC_PENDING_SIZE];
 static unsigned long lastDiscover = 0;
+static int lanConsecutiveFails = 0;
+static unsigned long lastLanFailTime = 0;
+
 
 // ===== LAN WebSocket 客户端 =====
 static WebSocketsClient wsClient;
 static bool wsBusy = false;
 static unsigned long wsStart = 0;
+static String lastLanIp = "";
+static uint16_t lastLanPort = 0;
+static unsigned long lastLanOk = 0;
 
 namespace LanClient {
 
@@ -23,37 +29,53 @@ bool sendToDevice(const String &ip, uint16_t port, const String &json) {
     wsBusy = true;
     wsStart = millis();
 
-    wsClient.begin(ip, port, "/");
+    // 同一目标且连接在2秒内，复用
+    bool reuse = (ip == lastLanIp && port == lastLanPort &&
+                  wsClient.isConnected() && (millis() - lastLanOk < 2000));
 
-    unsigned long t0 = millis();
-    while (millis() - t0 < 3000) {
-        wsClient.loop();
-        if (wsClient.isConnected()) break;
-        delay(10);
+    if (!reuse) {
+        wsClient.disconnect();
+        wsClient.begin(ip, port, "/");
+
+        unsigned long t0 = millis();
+        while (millis() - t0 < 300) {
+            wsClient.loop();
+            if (wsClient.isConnected()) break;
+            yield();
+        }
+        lastLanIp = ip;
+        lastLanPort = port;
     }
 
     bool ok = false;
     if (wsClient.isConnected()) {
-        String payload = json;  // 非 const 副本
+        String payload = json;
         ok = wsClient.sendTXT(payload);
+        lastLanOk = millis();
         Serial.printf("[LAN] %s %d bytes to %s:%u\n",
                       ok ? "Sent" : "FAIL", json.length(), ip.c_str(), port);
-        delay(50);
     } else {
         Serial.printf("[LAN] Connect timeout %s:%u\n", ip.c_str(), port);
+        lastLanIp = "";
     }
 
-    wsClient.disconnect();
     wsBusy = false;
     return ok;
 }
 
 
 void loop() {
-    if (wsBusy && millis() - wsStart > 5000) {
+    // 发送超时清理
+    if (wsBusy && millis() - wsStart > 3000) {
         wsClient.disconnect();
         wsBusy = false;
+        lastLanIp = "";
         Serial.println("[LAN] Client timeout, cleaned up");
+    }
+    // 空闲超过10秒断开连接释放资源
+     if (!wsBusy && lastLanIp.length() > 0 && (millis() - lastLanOk > 10000)) {
+        wsClient.disconnect();
+        lastLanIp = "";
     }
 }
 
@@ -207,13 +229,18 @@ int getDeviceCount() {
 // ===== 路由决策 =====
 
 RouteChannel decideRoute(DeviceEntry *dev) {
-    if (!dev) return ROUTE_NONE;
+    if (!dev) {
+        if (MqttClient::isConnected()) return ROUTE_MQTT;
+        return ROUTE_NONE;
+    }
     bool lanOk = dev->lanOnline && dev->ip.length() > 0 &&
                  (millis() - dev->lastSeen < DC_DEVICE_TIMEOUT);
     if (lanOk) return ROUTE_LAN;
-    if (dev->mqttOnline && MqttClient::isConnected()) return ROUTE_MQTT;
+    if (MqttClient::isConnected()) return ROUTE_MQTT;  // 不要求 mqttOnline
     return ROUTE_NONE;
 }
+
+
 
 
 // ===== 统一发送 =====
@@ -225,15 +252,39 @@ bool sendToTarget(const String &target, const String &json) {
     bool ok = false;
     switch (route) {
         case ROUTE_LAN:
+            // LAN 最近失败过且在冷却期内，直接走 MQTT
+            if (millis() - lastLanFailTime < 10000 && MqttClient::isConnected()) {
+                ok = MqttClient::publish(json);
+                Serial.printf("[DC] LAN cooldown, MQTT→ %s\n", target.c_str());
+                break;
+            }
             ok = LanClient::sendToDevice(dev->ip, dev->port ? dev->port : 8080, json);
             Serial.printf("[DC] LAN→ %s (%s)\n", target.c_str(), ok ? "OK" : "FAIL");
-            if (!ok && MqttClient::isConnected()) {
-                ok = mqttPublish(json);
-                Serial.printf("[DC] LAN fail, fallback MQTT→ %s\n", target.c_str());
+            if (!ok) {
+                lastLanFailTime = millis();
+                if (MqttClient::isConnected()) {
+                    ok = MqttClient::publish(json);
+                    Serial.printf("[DC] Fallback MQTT→ %s\n", target.c_str());
+                }
             }
             break;
+
+
+            ok = LanClient::sendToDevice(dev->ip, dev->port ? dev->port : 8080, json);
+            Serial.printf("[DC] LAN→ %s (%s)\n", target.c_str(), ok ? "OK" : "FAIL");
+            if (!ok) {
+                dev->lanOnline = false;  // 标记离线，下次不再尝试LAN
+                dev->lastSeen = 0;
+                Serial.printf("[DC] Marked %s LAN offline\n", target.c_str());
+                if (MqttClient::isConnected()) {
+                    ok = MqttClient::publish(json);
+                    Serial.printf("[DC] Fallback MQTT→ %s\n", target.c_str());
+                }
+            }
+            break;
+
         case ROUTE_MQTT:
-            ok = mqttPublish(json);
+            ok = MqttClient::publish(json);
             Serial.printf("[DC] MQTT→ %s\n", target.c_str());
             break;
         case ROUTE_NONE:
@@ -248,6 +299,18 @@ bool sendToTarget(const String &target, const String &json) {
     return ok;
 }
 
+bool sendToTargetLan(const String &target, const String &json) {
+    DeviceEntry *dev = findDevice(target);
+    if (!dev) return false;
+
+    bool lanOk = dev->lanOnline && dev->ip.length() > 0 &&
+                 (millis() - dev->lastSeen < DC_DEVICE_TIMEOUT);
+    if (!lanOk) return false;
+
+    bool ok = LanClient::sendToDevice(dev->ip, dev->port ? dev->port : 8080, json);
+    Serial.printf("[DC] LAN-only→ %s (%s)\n", target.c_str(), ok ? "OK" : "FAIL");
+    return ok;
+}
 
 bool broadcastAll(const String &json) {
     bool anySent = false;
@@ -258,11 +321,11 @@ bool broadcastAll(const String &json) {
                     devices[i].port ? devices[i].port : 8080, json))
                 anySent = true;
         } else if (route == ROUTE_MQTT) {
-            if (mqttPublish(json)) anySent = true;
+            if (MqttClient::publish(json)) anySent = true;
         }
     }
     // 兜底：发一份无 target 的 MQTT
-    if (mqttPublish(json)) anySent = true;
+    if (MqttClient::publish(json)) anySent = true;
     return anySent;
 }
 

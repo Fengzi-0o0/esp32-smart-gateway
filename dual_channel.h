@@ -50,6 +50,7 @@ namespace DualChannel {
 
     RouteChannel decideRoute(DeviceEntry *dev);
     bool sendToTarget(const String &target, const String &json);
+    bool sendToTargetLan(const String &target, const String &json);
     bool broadcastAll(const String &json);
 
     void handleAck(uint16_t mid);

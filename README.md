@@ -28,24 +28,23 @@ LAN+MQTT 双通道通信和 Web 可视化配置。
 5. 配置 Wi-Fi 连接，进入管理界面
 
 ## 项目结构
-
-- `esp32_smart_gateway.ino` — 主程序入口
-- `config.h` / `config.cpp` — 配置管理
-- `wifi_manager.h` / `.cpp` — Wi-Fi 管理与 UDP 设备发现
-- `mqtt_client.h` / `.cpp` — MQTT 客户端与命令解析
-- `dual_channel.h` / `.cpp` — 双通道路由与 LAN WebSocket 客户端
-- `web_server.h` / `.cpp` — Web 服务器与 API
-- `logic_engine.h` / `.cpp` — 逻辑规则引擎
-- `timer_engine.h` / `.cpp` — 定时任务引擎
-- `script_engine.h` / `.cpp` — 脚本引擎（变量、条件、数学运算）
-- `data_engine.h` / `.cpp` — 数据处理引擎（HEX、CRC、协议解析）
-- `rand_engine.h` / `.cpp` — 随机数引擎
-- `web_page.h` — 主配置页面
-- `cmd_builder_page.h` — 积木式命令编辑器
-- `ota_page.h` — OTA 升级页面
-- `msg_dedup.h` — MQTT 消息去重
-
-
+esp32_smart_gateway/
+├── esp32_smart_gateway.ino # 主程序入口
+├── config.h / config.cpp # 配置管理
+├── wifi_manager.h / .cpp # Wi-Fi 管理与 UDP 设备发现
+├── mqtt_client.h / .cpp # MQTT 客户端与命令解析
+├── dual_channel.h / .cpp # 双通道路由与 LAN WebSocket 客户端
+├── web_server.h / .cpp # Web 服务器与 API
+├── logic_engine.h / .cpp # 逻辑规则引擎
+├── timer_engine.h / .cpp # 定时任务引擎
+├── script_engine.h / .cpp # 脚本引擎（变量、条件、数学运算）
+├── data_engine.h / .cpp # 数据处理引擎（HEX、CRC、协议解析）
+├── rand_engine.h / .cpp # 随机数引擎
+├── web_page.h # 主配置页面
+├── cmd_builder_page.h # 积木式命令编辑器
+├── ota_page.h # OTA 升级页面
+├── msg_dedup.h # MQTT 消息去重
+└── README.md
 
 ## 技术栈
 
