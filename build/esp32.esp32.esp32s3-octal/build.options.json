@@ -1,0 +1,10 @@
+{
+  "additionalFiles": "..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..,..\\..",
+  "builtInLibrariesFolders": "C:\\Users\\86159\\AppData\\Local\\Arduino15\\libraries",
+  "compiler.optimization_flags": "-Os",
+  "customBuildProperties": "",
+  "fqbn": "esp32:esp32:esp32s3-octal:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=default,MSCOnBoot=default,DFUOnBoot=default,UploadMode=default,CPUFreq=240,FlashMode=qio120,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,DebugLevel=none,PSRAM=opi,LoopCore=1,EventsCore=1,EraseFlash=none,JTAGAdapter=default",
+  "hardwareFolders": "C:\\Users\\86159\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\3.3.5,C:\\Users\\86159\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\3.3.5",
+  "otherLibrariesFolders": "c:\\Users\\86159\\Documents\\Arduino\\libraries",
+  "sketchLocation": "E:\\arduino\\ESP32PRJ\\esp32_smart_gateway"
+}
