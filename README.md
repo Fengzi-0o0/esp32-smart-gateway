@@ -57,3 +57,5 @@ esp32_smart_gateway/
 ## 许可证
 
 MIT License
+
+- **起始点**：我在github发布的第一个项目，虽然很简单0.0
