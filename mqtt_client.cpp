@@ -50,15 +50,32 @@ static void publishResult(const String &payload) {
 }
 
 bool MqttClient::publish(const String &json) {
-  if (!mqttClient.connected()) return false;
-  bool anyOk = false;
-  // 发到 subTopics（所有设备都订阅的共享命令通道）
-  for (size_t i = 0; i < config.subTopics.size(); i++) {
-    if (mqttClient.publish(config.subTopics[i].topic.c_str(), json.c_str()))
-      anyOk = true;
-  }
-  return anyOk;
+    if (!mqttClient.connected()) return false;
+
+    // ═══════════════════════════════════════════════════════════
+    // ★★★ 新增：注入 _from 字段，让接收方能识别消息来源 ★★★
+    // ═══════════════════════════════════════════════════════════
+    String finalJson = json;
+    {
+        JsonDocument doc;
+        if (!deserializeJson(doc, json)) {
+            doc["_from"] = getDeviceId();
+            serializeJson(doc, finalJson);
+        }
+    }
+    // ═══════════════════════════════════════════════════════════
+    // ★★★ 新增结束 ★★★
+    // ═══════════════════════════════════════════════════════════
+
+    bool anyOk = false;
+    // 发到 subTopics（所有设备都订阅的共享命令通道）
+    for (size_t i = 0; i < config.subTopics.size(); i++) {
+        if (mqttClient.publish(config.subTopics[i].topic.c_str(), finalJson.c_str()))
+            anyOk = true;
+    }
+    return anyOk;
 }
+
 
 
 
@@ -701,6 +718,10 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt ) {
         bool matchId = (t == myId);
         bool matchName = (myName.length() > 0 && t == myName);
         if (!matchId && !matchName) {
+          String cmdCheck = doc["cmd"].as<String>();
+          if (cmdCheck == "forward") {
+            // 不做任何事，让代码继续往下走到 forward 处理器
+          } else {
           String json;
           serializeJson(doc, json);
           if (fromMqtt) {
@@ -709,6 +730,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt ) {
             DualChannel::sendToTarget(t, json);
           }
           return;
+        }
         }
       }
     }
@@ -818,9 +840,16 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt ) {
             Serial.printf("[PUBLISH] Interpolated $V:%s → %d\n", varName.c_str(), (int)val);
           } else break;
         }
+
       }
       // ===== 插值结束 =====
-
+       if (payload.startsWith("{")) {
+        JsonDocument payloadDoc;
+        if (!deserializeJson(payloadDoc, payload)) {
+          payloadDoc["_from"] = getDeviceId();
+          serializeJson(payloadDoc, payload);
+        }
+      }
 
       if (topic.length() > 0 && MqttClient::isConnected()) {
         MqttClient::publish(topic.c_str(), payload.c_str());
@@ -828,7 +857,81 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt ) {
       }
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // ★★★ 新增：forward 命令 — 跨设备转发 ★★★
+    // ═══════════════════════════════════════════════════════════
+        // ═══════════════════════════════════════════════════════════
+    // ★★★ forward 命令 — 跨设备转发 ★★★
+    // ═══════════════════════════════════════════════════════════
+    else if (cmd == "forward") {
+      String target = doc["target"].as<String>();
+      if (target.length() == 0) {
+        Serial.println("[FWD] target required");
+        return;
+      }
+      if (!doc.containsKey("payload")) {
+        Serial.println("[FWD] payload required");
+        return;
+      }
 
+      // 1. 序列化 payload 为字符串
+      String payloadStr;
+      serializeJson(doc["payload"], payloadStr);
+
+      // 2. $V: 变量插值
+      {
+        int pos;
+        int guard = 0;
+        while ((pos = payloadStr.indexOf("\"$V:")) >= 0 && guard < 20) {
+          guard++;
+          String varName = "";
+          int nameStart = pos + 4;
+          for (int i = nameStart; i < (int)payloadStr.length(); i++) {
+            char c = payloadStr.charAt(i);
+            if (isAlphaNumeric(c) || c == '_') varName += c;
+            else break;
+          }
+          if (varName.length() > 0
+              && nameStart + (int)varName.length() < (int)payloadStr.length()
+              && payloadStr.charAt(nameStart + varName.length()) == '"') {
+            float val = ScriptEngine::getVar(varName, 0);
+            int nameEnd = nameStart + varName.length() + 1;
+            payloadStr = payloadStr.substring(0, pos)
+                         + String((int)val)
+                         + payloadStr.substring(nameEnd);
+            Serial.printf("[FWD] $V:%s → %d\n", varName.c_str(), (int)val);
+          } else break;
+        }
+      }
+
+      // 3. 判断 target 是否是自己
+      String myId = getDeviceId();
+      String myName = config.deviceName;
+      bool isSelf = (target == myId) || (myName.length() > 0 && target == myName);
+
+      if (isSelf) {
+        // ★★★ target 是自己，直接本地执行 payload ★★★
+        JsonDocument payloadDoc;
+        if (!deserializeJson(payloadDoc, payloadStr)) {
+          Serial.printf("[FWD] Local exec: %s\n", payloadStr.c_str());
+          executeCommand(payloadDoc);
+        }
+      } else {
+        // ★★★ target 是其他设备，注入 target 和 _from，通过 DualChannel 发送 ★★★
+        JsonDocument payloadDoc;
+        if (!deserializeJson(payloadDoc, payloadStr)) {
+          payloadDoc["target"] = target;
+          payloadDoc["_from"] = getDeviceId();
+          serializeJson(payloadDoc, payloadStr);
+        }
+        bool ok = DualChannel::sendToTarget(target, payloadStr);
+        Serial.printf("[FWD] → %s (%s): %s\n",
+                      target.c_str(), ok ? "OK" : "FAIL", payloadStr.c_str());
+      }
+    }
+    // ═══════════════════════════════════════════════════════════
+    // ★★★ forward 结束 ★★★
+    // ═══════════════════════════════════════════════════════════
 
 
     else if (cmd == "rgb") {
@@ -1580,6 +1683,14 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt ) {
     if (err) {
       Serial.printf("[MQTT] JSON error: %s\n", err.c_str());
       return;
+    }
+
+    if (doc.containsKey("_from")) {
+        String from = doc["_from"].as<String>();
+        if (from.length() > 0 && from == getDeviceId()) {
+            Serial.printf("[MQTT] Echo filtered (from self) on %s\n", topic);
+            return;
+        }
     }
 
     String cmd = doc["cmd"].as<String>();

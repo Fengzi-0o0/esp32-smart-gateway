@@ -20,7 +20,7 @@
 #define MAX_UART_PORTS      2
 #define MAX_SPI_PORTS       2
 #define MAX_TOUCH_PINS      10
-#define FIRMWARE_VERSION    "1.0.1"  // 版本号更新
+#define FIRMWARE_VERSION    "1.0.1fix5"  // 版本号更新
 #define UDP_DISCOVERY_PORT  4210
 #define OTA_CHUNK_SIZE      1024
 

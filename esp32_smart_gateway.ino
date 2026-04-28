@@ -19,7 +19,7 @@
 
 
 
-const char *OTA_VERIFY_TAG = "已经修复跨局域网mqtt通信";
+const char *OTA_VERIFY_TAG = "高并发修复测试1";
 
 
 WebServer server(80);
