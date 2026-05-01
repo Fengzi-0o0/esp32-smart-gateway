@@ -19,7 +19,7 @@
 
 
 
-const char *OTA_VERIFY_TAG = "高并发修复测试1";
+const char *OTA_VERIFY_TAG = "缺失修复";
 
 
 WebServer server(80);

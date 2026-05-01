@@ -14,6 +14,7 @@
 #include "monitor_page.h"
 #include "cmd_builder_page.h"
 #include "dual_channel.h"
+#include <Preferences.h>
 
 
 
@@ -69,6 +70,150 @@ static void handleGetConfig() {
   Serial.printf("[WEB] Config JSON: %d bytes\n", json.length());
   server.send(200, "application/json", json);
 }
+
+static void handleGetPresets() {
+    Preferences prefs;
+    prefs.begin("presets", true);
+    uint8_t cnt = prefs.getUChar("cnt", 0);
+    if (cnt > 20) cnt = 20;
+
+    JsonDocument doc;
+    JsonArray arr = doc["presets"].to<JsonArray>();
+
+    for (uint8_t i = 0; i < cnt; i++) {
+        String p = "p" + String(i) + "_";
+        String name = prefs.getString((p + "nm").c_str(), "");
+        String json = prefs.getString((p + "js").c_str(), "[]");
+        if (name.length() > 0) {
+            JsonObject o = arr.add<JsonObject>();
+            o["id"] = i;
+            o["name"] = name;
+            JsonDocument blocksDoc;
+            if (!deserializeJson(blocksDoc, json)) {
+                o["blocks"] = blocksDoc;
+            }
+        }
+    }
+    prefs.end();
+
+    String response;
+    serializeJson(doc, response);
+    server.send(200, "application/json", response);
+}
+
+static void handlePostPresets() {
+    if (!server.hasArg("plain")) {
+        server.send(400, "application/json", "{\"ok\":false}");
+        return;
+    }
+
+    JsonDocument doc;
+    if (deserializeJson(doc, server.arg("plain"))) {
+        server.send(400, "application/json", "{\"ok\":false}");
+        return;
+    }
+
+    String name = doc["name"] | String("");
+    if (name.length() == 0) {
+        server.send(400, "application/json", "{\"ok\":false,\"error\":\"name required\"}");
+        return;
+    }
+
+    Preferences prefs;
+    prefs.begin("presets", false);
+    uint8_t cnt = prefs.getUChar("cnt", 0);
+
+    int existingIdx = -1;
+    for (uint8_t i = 0; i < cnt && i < 20; i++) {
+        if (prefs.getString(("p" + String(i) + "_nm").c_str(), "") == name) {
+            existingIdx = i;
+            break;
+        }
+    }
+
+    int idx = (existingIdx >= 0) ? existingIdx : cnt;
+    if (idx >= 20) {
+        prefs.end();
+        server.send(400, "application/json", "{\"ok\":false,\"error\":\"max 20 presets\"}");
+        return;
+    }
+
+    String p = "p" + String(idx) + "_";
+    prefs.putString((p + "nm").c_str(), name);
+
+    String blocksJson;
+    serializeJson(doc["blocks"], blocksJson);
+    prefs.putString((p + "js").c_str(), blocksJson);
+
+    if (existingIdx < 0) {
+        prefs.putUChar("cnt", cnt + 1);
+    }
+    prefs.end();
+
+    JsonDocument resp;
+    resp["ok"] = true;
+    resp["id"] = idx;
+    String response;
+    serializeJson(resp, response);
+    server.send(200, "application/json", response);
+    Serial.printf("[PRESET] Saved '%s' (idx=%d, %d bytes)\n",
+                  name.c_str(), idx, blocksJson.length());
+}
+
+static void handleDeletePresets() {
+    // 从 URL 路径中提取名称: /api/preset/xxx
+    String uri = server.uri();
+    String name = "";
+    int lastSlash = uri.lastIndexOf('/');
+    if (lastSlash >= 0 && lastSlash < (int)uri.length() - 1) {
+        name = uri.substring(lastSlash + 1);
+    }
+    // 也兼容 ?name=xxx 查询参数
+    if (name.length() == 0 && server.hasArg("name")) {
+        name = server.arg("name");
+    }
+    if (name.length() == 0) {
+        server.send(400, "application/json", "{\"ok\":false,\"error\":\"name required\"}");
+        return;
+    }
+
+    Preferences prefs;
+    prefs.begin("presets", false);
+    uint8_t cnt = prefs.getUChar("cnt", 0);
+
+    int foundIdx = -1;
+    for (uint8_t i = 0; i < cnt && i < 20; i++) {
+        if (prefs.getString(("p" + String(i) + "_nm").c_str(), "") == name) {
+            foundIdx = i;
+            break;
+        }
+    }
+
+    if (foundIdx < 0) {
+        prefs.end();
+        server.send(404, "application/json", "{\"ok\":false,\"error\":\"not found\"}");
+        return;
+    }
+
+    // 前移覆盖
+    for (int i = foundIdx; i < cnt - 1; i++) {
+        String src = "p" + String(i + 1) + "_";
+        String dst = "p" + String(i) + "_";
+        prefs.putString((dst + "nm").c_str(), prefs.getString((src + "nm").c_str(), ""));
+        prefs.putString((dst + "js").c_str(), prefs.getString((src + "js").c_str(), ""));
+    }
+
+    String last = "p" + String(cnt - 1) + "_";
+    prefs.remove((last + "nm").c_str());
+    prefs.remove((last + "js").c_str());
+    prefs.putUChar("cnt", cnt - 1);
+    prefs.end();
+
+    server.send(200, "application/json", "{\"ok\":true}");
+    Serial.printf("[PRESET] Deleted '%s' (idx=%d)\n", name.c_str(), foundIdx);
+}
+
+
 
 static void handlePostConfig() {
   if (!server.hasArg("plain")) {
@@ -578,7 +723,12 @@ static void wsOtaEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t leng
     server.on("/api/system", HTTP_GET, handleGetSystem);
     server.on("/builder", HTTP_GET, handleCmdBuilderPage);
   
-    server.on("/api/devices", HTTP_GET, handleGetDevices);
+   server.on("/api/devices", HTTP_GET, handleGetDevices);
+
+server.on("/api/presets", HTTP_GET, handleGetPresets);
+server.on("/api/preset", HTTP_POST, handlePostPresets);
+server.on("/api/preset", HTTP_DELETE, handleDeletePresets);
+
    
 
     server.on("/api/pins", HTTP_GET, handleGetPinCapabilities);
