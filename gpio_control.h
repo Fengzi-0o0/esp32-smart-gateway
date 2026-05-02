@@ -11,6 +11,9 @@ namespace GpioControl {
     void setMode(int pin, int mode);
     int  getPinMode(int pin);
     void publishStatus();
+
+    long measurePulse(int pin, int trigPin, int level, int timeout, int samples);
+    void toneSet(int pin, unsigned int freq);
 }
 
 #endif

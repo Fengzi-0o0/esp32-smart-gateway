@@ -22,6 +22,8 @@
 #include "data_engine.h"
 #include "msg_dedup.h"
 #include "dual_channel.h"
+#include "encoder_engine.h"
+
 
 
 
@@ -50,30 +52,30 @@ static void publishResult(const String &payload) {
 }
 
 bool MqttClient::publish(const String &json) {
-    if (!mqttClient.connected()) return false;
+  if (!mqttClient.connected()) return false;
 
-    // ═══════════════════════════════════════════════════════════
-    // ★★★ 新增：注入 _from 字段，让接收方能识别消息来源 ★★★
-    // ═══════════════════════════════════════════════════════════
-    String finalJson = json;
-    {
-        JsonDocument doc;
-        if (!deserializeJson(doc, json)) {
-            doc["_from"] = getDeviceId();
-            serializeJson(doc, finalJson);
-        }
+  // ═══════════════════════════════════════════════════════════
+  // ★★★ 新增：注入 _from 字段，让接收方能识别消息来源 ★★★
+  // ═══════════════════════════════════════════════════════════
+  String finalJson = json;
+  {
+    JsonDocument doc;
+    if (!deserializeJson(doc, json)) {
+      doc["_from"] = getDeviceId();
+      serializeJson(doc, finalJson);
     }
-    // ═══════════════════════════════════════════════════════════
-    // ★★★ 新增结束 ★★★
-    // ═══════════════════════════════════════════════════════════
+  }
+  // ═══════════════════════════════════════════════════════════
+  // ★★★ 新增结束 ★★★
+  // ═══════════════════════════════════════════════════════════
 
-    bool anyOk = false;
-    // 发到 subTopics（所有设备都订阅的共享命令通道）
-    for (size_t i = 0; i < config.subTopics.size(); i++) {
-        if (mqttClient.publish(config.subTopics[i].topic.c_str(), finalJson.c_str()))
-            anyOk = true;
-    }
-    return anyOk;
+  bool anyOk = false;
+  // 发到 subTopics（所有设备都订阅的共享命令通道）
+  for (size_t i = 0; i < config.subTopics.size(); i++) {
+    if (mqttClient.publish(config.subTopics[i].topic.c_str(), finalJson.c_str()))
+      anyOk = true;
+  }
+  return anyOk;
 }
 
 
@@ -163,6 +165,7 @@ static void publishBatchStatus() {
   JsonDocument doc;
   doc["type"] = "batch_status";
   doc["deviceId"] = getDeviceId();
+  doc["mac"] = WiFi.macAddress();  //设备序列号
   doc["timestamp"] = millis();
   doc["heapFree"] = ESP.getFreeHeap();
   doc["uptime"] = millis() / 1000;
@@ -697,31 +700,31 @@ static void handleLogicCommand(JsonDocument &doc) {
 }
 
 // 主命令分发
-static void handleCommand(JsonDocument &doc, bool fromMqtt ) {
-  
+static void handleCommand(JsonDocument &doc, bool fromMqtt) {
 
-    // ===== _mid 去重 =====
-    {
-      uint16_t mid = MsgDedup::parseMid(doc);
-      if (cmdDedup.isDuplicate(mid)) {
-        Serial.printf("[CMD] Dup _mid=0x%04X, skipped\n", mid);
-        return;
-      }
-      cmdDedup.record(mid);
+
+  // ===== _mid 去重 =====
+  {
+    uint16_t mid = MsgDedup::parseMid(doc);
+    if (cmdDedup.isDuplicate(mid)) {
+      Serial.printf("[CMD] Dup _mid=0x%04X, skipped\n", mid);
+      return;
     }
+    cmdDedup.record(mid);
+  }
 
-    if (doc.containsKey("target")) {
-      String t = doc["target"].as<String>();
-      if (t.length() > 0 && t != "all") {
-        String myId = getDeviceId();
-        String myName = config.deviceName;
-        bool matchId = (t == myId);
-        bool matchName = (myName.length() > 0 && t == myName);
-        if (!matchId && !matchName) {
-          String cmdCheck = doc["cmd"].as<String>();
-          if (cmdCheck == "forward") {
-            // 不做任何事，让代码继续往下走到 forward 处理器
-          } else {
+  if (doc.containsKey("target")) {
+    String t = doc["target"].as<String>();
+    if (t.length() > 0 && t != "all") {
+      String myId = getDeviceId();
+      String myName = config.deviceName;
+      bool matchId = (t == myId);
+      bool matchName = (myName.length() > 0 && t == myName);
+      if (!matchId && !matchName) {
+        String cmdCheck = doc["cmd"].as<String>();
+        if (cmdCheck == "forward") {
+          // 不做任何事，让代码继续往下走到 forward 处理器
+        } else {
           String json;
           serializeJson(doc, json);
           if (fromMqtt) {
@@ -731,1287 +734,1274 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt ) {
           }
           return;
         }
-        }
       }
     }
-    String cmd = doc["cmd"].as<String>();
+  }
+  String cmd = doc["cmd"].as<String>();
 
 
-    if (cmd == "set") {
+  if (cmd == "set") {
 
-      int pin = doc["pin"] | -1;
-      if (pin >= 0 && !isValidExternalPin(pin)) {
-        Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
-        return;
-      }
-      int value = 0;
-      if (doc["value"].is<int>()) {
-        value = doc["value"].as<int>();
-      } else if (doc["value"].is<float>()) {
-        value = (int)doc["value"].as<float>();
-      } else if (doc["value"].is<String>()) {
-        value = doc["value"].as<String>().toInt();
-      }
-      if (pin >= 0) {
-        GpioControl::digitalSet(pin, value);
-        Serial.printf("[GPIO] SET pin=%d value=%d\n", pin, value);
-        GpioControl::publishStatus();
-      }
-    } else if (cmd == "toggle") {
-      int pin = doc["pin"] | -1;
-      if (pin >= 0 && !isValidExternalPin(pin)) {
-        Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
-        return;
-      }
-      if (pin >= 0) {
-        GpioControl::digitalToggle(pin);
-        Serial.printf("[GPIO] TOGGLE pin=%d\n", pin);
-        GpioControl::publishStatus();
-      }
-    } else if (cmd == "mode") {
-      int pin = doc["pin"] | -1;
-      if (pin >= 0 && !isValidExternalPin(pin)) {
-        Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
-        return;
-      }
-      String modeStr = doc["mode"].as<String>();
-      if (pin >= 0) {
-        int m = OUTPUT;
-        if (modeStr == "input") m = INPUT;
-        else if (modeStr == "input_pullup") m = INPUT_PULLUP;
-        GpioControl::setMode(pin, m);
-        Serial.printf("[GPIO] MODE pin=%d mode=%s\n", pin, modeStr.c_str());
-        GpioControl::publishStatus();
-      }
-    } else if (cmd == "pwm") {
-      int pin = doc["pin"] | -1;
-      if (pin >= 0 && !isValidExternalPin(pin)) {
-        Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
-        return;
-      }
-      int value = 0;
-      if (doc["value"].is<int>()) {
-        value = doc["value"].as<int>();
-      } else if (doc["value"].is<float>()) {
-        value = (int)doc["value"].as<float>();
-      } else if (doc["value"].is<String>()) {
-        // 兼容 $V: 变量插值后变为字符串的情况
-        value = doc["value"].as<String>().toInt();
-      }
-      if (pin >= 0) {
-        GpioControl::analogSet(pin, value);
-        Serial.printf("[GPIO] PWM pin=%d value=%d\n", pin, value);
-        GpioControl::publishStatus();
-      }
+    int pin = doc["pin"] | -1;
+    if (pin >= 0 && !isValidExternalPin(pin)) {
+      Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
+      return;
     }
-
-    else if (cmd == "publish") {
-      String topic = doc["topic"].as<String>();
-      String payload;
-      if (doc.containsKey("payload")) {
-        if (doc["payload"].is<JsonObject>() || doc["payload"].is<JsonArray>()) {
-          serializeJson(doc["payload"], payload);
-        } else {
-          payload = doc["payload"].as<String>();
-        }
-      }
-
-      // ===== 变量插值："$V:varname" → 数字（去掉引号） =====
-      {
-        int pos;
-        int loopGuard = 0;
-        while ((pos = payload.indexOf("\"$V:")) >= 0 && loopGuard < 20) {
-          loopGuard++;
-          String varName = "";
-          int nameStart = pos + 4;
-          for (int i = nameStart; i < (int)payload.length(); i++) {
-            char c = payload.charAt(i);
-            if (isAlphaNumeric(c) || c == '_') varName += c;
-            else break;
-          }
-          if (varName.length() > 0
-              && nameStart + (int)varName.length() < (int)payload.length()
-              && payload.charAt(nameStart + varName.length()) == '"') {
-            float val = ScriptEngine::getVar(varName, 0);
-            int nameEnd = nameStart + varName.length() + 1;
-            payload = payload.substring(0, pos)
-                      + String((int)val)
-                      + payload.substring(nameEnd);
-            Serial.printf("[PUBLISH] Interpolated $V:%s → %d\n", varName.c_str(), (int)val);
-          } else break;
-        }
-
-      }
-      // ===== 插值结束 =====
-       if (payload.startsWith("{")) {
-        JsonDocument payloadDoc;
-        if (!deserializeJson(payloadDoc, payload)) {
-          payloadDoc["_from"] = getDeviceId();
-          serializeJson(payloadDoc, payload);
-        }
-      }
-
-      if (topic.length() > 0 && MqttClient::isConnected()) {
-        MqttClient::publish(topic.c_str(), payload.c_str());
-        Serial.printf("[MQTT] Publish to %s: %s\n", topic.c_str(), payload.c_str());
-      }
+    int value = 0;
+    if (doc["value"].is<int>()) {
+      value = doc["value"].as<int>();
+    } else if (doc["value"].is<float>()) {
+      value = (int)doc["value"].as<float>();
+    } else if (doc["value"].is<String>()) {
+      value = doc["value"].as<String>().toInt();
     }
-
-    // ═══════════════════════════════════════════════════════════
-    // ★★★ 新增：forward 命令 — 跨设备转发 ★★★
-    // ═══════════════════════════════════════════════════════════
-        // ═══════════════════════════════════════════════════════════
-    // ★★★ forward 命令 — 跨设备转发 ★★★
-    // ═══════════════════════════════════════════════════════════
-    else if (cmd == "forward") {
-      String target = doc["target"].as<String>();
-      if (target.length() == 0) {
-        Serial.println("[FWD] target required");
-        return;
-      }
-      if (!doc.containsKey("payload")) {
-        Serial.println("[FWD] payload required");
-        return;
-      }
-
-      // 1. 序列化 payload 为字符串
-      String payloadStr;
-      serializeJson(doc["payload"], payloadStr);
-
-      // 2. $V: 变量插值
-      {
-        int pos;
-        int guard = 0;
-        while ((pos = payloadStr.indexOf("\"$V:")) >= 0 && guard < 20) {
-          guard++;
-          String varName = "";
-          int nameStart = pos + 4;
-          for (int i = nameStart; i < (int)payloadStr.length(); i++) {
-            char c = payloadStr.charAt(i);
-            if (isAlphaNumeric(c) || c == '_') varName += c;
-            else break;
-          }
-          if (varName.length() > 0
-              && nameStart + (int)varName.length() < (int)payloadStr.length()
-              && payloadStr.charAt(nameStart + varName.length()) == '"') {
-            float val = ScriptEngine::getVar(varName, 0);
-            int nameEnd = nameStart + varName.length() + 1;
-            payloadStr = payloadStr.substring(0, pos)
-                         + String((int)val)
-                         + payloadStr.substring(nameEnd);
-            Serial.printf("[FWD] $V:%s → %d\n", varName.c_str(), (int)val);
-          } else break;
-        }
-      }
-
-      // 3. 判断 target 是否是自己
-      String myId = getDeviceId();
-      String myName = config.deviceName;
-      bool isSelf = (target == myId) || (myName.length() > 0 && target == myName);
-
-      if (isSelf) {
-        // ★★★ target 是自己，直接本地执行 payload ★★★
-        JsonDocument payloadDoc;
-        if (!deserializeJson(payloadDoc, payloadStr)) {
-          Serial.printf("[FWD] Local exec: %s\n", payloadStr.c_str());
-          executeCommand(payloadDoc);
-        }
-      } else {
-        // ★★★ target 是其他设备，注入 target 和 _from，通过 DualChannel 发送 ★★★
-        JsonDocument payloadDoc;
-        if (!deserializeJson(payloadDoc, payloadStr)) {
-          payloadDoc["target"] = target;
-          payloadDoc["_from"] = getDeviceId();
-          serializeJson(payloadDoc, payloadStr);
-        }
-        bool ok = DualChannel::sendToTarget(target, payloadStr);
-        Serial.printf("[FWD] → %s (%s): %s\n",
-                      target.c_str(), ok ? "OK" : "FAIL", payloadStr.c_str());
-      }
-    }
-    // ═══════════════════════════════════════════════════════════
-    // ★★★ forward 结束 ★★★
-    // ═══════════════════════════════════════════════════════════
-
-
-    else if (cmd == "rgb") {
-      int rPin = doc["rPin"] | -1;
-      int gPin = doc["gPin"] | -1;
-      int bPin = doc["bPin"] | -1;
-      if ((rPin >= 0 && !isValidExternalPin(rPin)) || (gPin >= 0 && !isValidExternalPin(gPin)) || (bPin >= 0 && !isValidExternalPin(bPin))) {
-        Serial.println("[GPIO] RGB: invalid pin in external pinout");
-        return;
-      }
-      int r = doc["r"] | 0;
-      int g = doc["g"] | 0;
-      int b = doc["b"] | 0;
-      if (rPin >= 0 && gPin >= 0 && bPin >= 0) {
-        GpioControl::analogSet(rPin, r);
-        GpioControl::analogSet(gPin, g);
-        GpioControl::analogSet(bPin, b);
-        Serial.printf("[GPIO] RGB R=%d(pin%d) G=%d(pin%d) B=%d(pin%d)\n",
-                      r, rPin, g, gPin, b, bPin);
-        GpioControl::publishStatus();
-      } else {
-        Serial.println("[GPIO] RGB: rPin/gPin/bPin all required");
-      }
-    } else if (cmd == "servo") {
-      int pin = doc["pin"] | -1;
-      if (pin >= 0 && !isValidExternalPin(pin)) {
-        Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
-        return;
-      }
-      int angle = doc["angle"] | 90;
-      if (pin >= 0) {
-        ServoEntry *se = findOrAddServo(pin);
-        if (se) {
-          if (!se->attached) {
-            se->servo.attach(pin);
-            se->attached = true;
-            Serial.printf("[GPIO] SERVO attached pin=%d\n", pin);
-          }
-          se->servo.write(angle);
-          se->angle = angle;
-          Serial.printf("[GPIO] SERVO pin=%d angle=%d\n", pin, angle);
-        }
-      } else {
-        Serial.println("[GPIO] SERVO: pin required");
-      }
-    } else if (cmd == "servo_detach") {
-      int pin = doc["pin"] | -1;
-      if (pin >= 0) {
-        for (int i = 0; i < servoCount; i++) {
-          if (servoList[i].pin == pin && servoList[i].attached) {
-            servoList[i].servo.detach();
-            servoList[i].attached = false;
-            Serial.printf("[GPIO] SERVO_DETACH pin=%d\n", pin);
-            break;
-          }
-        }
-      }
-    }
-
-    else if (cmd == "pulse_in") {
-      int pin = doc["pin"] | -1;
-      if (pin < 0 || !isValidExternalPin(pin)) {
-        Serial.println("[PULSE] REJECTED: invalid pin");
-        return;
-      }
-      int trigPin = doc["trig"] | -1;  // 新增：可选触发引脚
-      if (trigPin >= 0 && !isValidExternalPin(trigPin)) {
-        Serial.printf("[PULSE] REJECTED: trig=%d\n", trigPin);
-        return;
-      }
-      String state = doc["state"] | String("high");
-      int timeout = doc["timeout"] | 30000;
-      int samples = doc["samples"] | 1;
-
-      if (samples < 1) samples = 1;
-      if (samples > 20) samples = 20;
-
-      pinMode(pin, INPUT);
-      if (trigPin >= 0) {
-        pinMode(trigPin, OUTPUT);
-      }
-      int level = (state == "low") ? LOW : HIGH;
-
-      long readings[20];
-      int validCount = 0;
-
-      for (int s = 0; s < samples; s++) {
-        // 触发脉冲（通用，非超声波专用）
-        if (trigPin >= 0) {
-
-          digitalWrite(trigPin, LOW);
-          delayMicroseconds(2);
-          digitalWrite(trigPin, HIGH);
-          delayMicroseconds(10);
-          digitalWrite(trigPin, LOW);
-        }
-
-        long duration = pulseIn(pin, level, timeout);
-        if (duration > 0) {
-          readings[validCount++] = duration;
-        }
-        if (s < samples - 1) delay(20);
-      }
-
-      long medianDuration = 0;
-      if (validCount > 0) {
-        for (int i = 0; i < validCount - 1; i++)
-          for (int j = i + 1; j < validCount; j++)
-            if (readings[j] < readings[i]) {
-              long tmp = readings[i];
-              readings[i] = readings[j];
-              readings[j] = tmp;
-            }
-        medianDuration = readings[validCount / 2];
-      }
-
-      // result_var 存入脚本变量
-      if (doc.containsKey("result_var")) {
-        String varName = doc["result_var"].as<String>();
-        if (varName.length() > 0)
-          ScriptEngine::setVar(varName, (float)medianDuration, false);
-      }
-
-      JsonDocument resp;
-      resp["type"] = "pulse_in";
-      resp["deviceId"] = getDeviceId();
-      resp["pin"] = pin;
-      resp["state"] = state;
-      resp["duration"] = medianDuration;
-      resp["validCount"] = validCount;
-      resp["samples"] = samples;
-      String p;
-      serializeJson(resp, p);
-      if (MqttClient::isConnected() && config.pubTopics.size() > 0)
-        MqttClient::publish(config.pubTopics[0].topic.c_str(), p.c_str());
-      Serial.printf("[PULSE] pin=%d state=%s duration=%ld us (%d/%d)\n",
-                    pin, state.c_str(), medianDuration, validCount, samples);
-    }
-
-
-
-
-
-    else if (cmd == "batch") {
-      int batchDepth = 0;
-      if (doc.containsKey("_bd")) batchDepth = doc["_bd"].as<int>();
-      if (batchDepth >= 3) {
-        Serial.println("[BATCH] Max depth 3 reached, skipped");
-        return;
-      }
-      JsonArray cmds = doc["commands"].as<JsonArray>();
-      Serial.printf("[GPIO] BATCH: %u commands (depth=%d)\n", cmds.size(), batchDepth);
-      for (JsonObject c : cmds) {
-        JsonDocument tmp;
-        tmp.set(c);
-        tmp["_bd"] = batchDepth + 1;
-        handleCommand(tmp, fromMqtt);
-      }
-    }
-
-
-    else if (cmd == "clear") {
-      Serial.println("[GPIO] Clearing all pins");
-
-      // 1. 保存定时器原始状态，然后禁用
-      std::vector<bool> timerStates;
-      for (auto &t : TimerEngine::getList()) {
-        timerStates.push_back(t.enabled);
-        t.enabled = false;
-      }
-
-      // 2. 保存逻辑规则原始状态，然后禁用
-      std::vector<bool> logicStates;
-      for (auto &r : LogicEngine::getList()) {
-        logicStates.push_back(r.enabled);
-        r.enabled = false;
-      }
-
-      // 3. 清除所有引脚
-      for (int pin = 0; pin < 48; pin++) {
-        int mode = GpioControl::getPinMode(pin);
-        if (mode == OUTPUT) {
-          analogWrite(pin, 0);
-          digitalWrite(pin, LOW);
-          Serial.printf("[GPIO] Cleared pin %d\n", pin);
-        }
-      }
-
-      // 4. 分离所有舵机
-      for (int i = 0; i < servoCount; i++) {
-        if (servoList[i].attached) {
-          servoList[i].servo.detach();
-          servoList[i].attached = false;
-          Serial.printf("[GPIO] Detached servo pin %d\n", servoList[i].pin);
-        }
-      }
-
-      // 5. 重置 GPIO 运行时记录
-      GpioControl::init();
-
-      // 6. 原样恢复定时器状态（不改 RTC 相关的触发时间）
-      for (size_t i = 0; i < TimerEngine::getList().size(); i++) {
-        auto &t = TimerEngine::getList()[i];
-        t.enabled = timerStates[i];
-        // 如果原来是启用的，重置执行计数让它从干净状态重新开始
-        if (t.enabled) {
-          t.executed = 0;
-          t.lastRun = millis();
-          t.startTime = millis();
-        }
-      }
-
-      // 7. 原样恢复逻辑规则状态
-      for (size_t i = 0; i < LogicEngine::getList().size(); i++) {
-        auto &r = LogicEngine::getList()[i];
-        r.enabled = logicStates[i];
-        // 如果原来是启用的，重置边沿检测从干净状态重新判断
-        if (r.enabled) {
-          r.prevCondition = false;
-          r.lastTrigger = 0;
-        }
-      }
-
-      // 8. RTC 定时任务不动（它们触发时间没到就不会执行，和引脚状态无关）
-
-      // 9. 发布状态
+    if (pin >= 0) {
+      GpioControl::digitalSet(pin, value);
+      Serial.printf("[GPIO] SET pin=%d value=%d\n", pin, value);
       GpioControl::publishStatus();
-
-      Serial.println("[GPIO] All cleared, tasks restored to original state");
     }
-
-
-    else if (cmd == "dump") {
-      JsonDocument doc;
-      doc["type"] = "config_dump";
-      doc["deviceId"] = getDeviceId();
-      doc["deviceName"] = config.deviceName;
-
-      // WiFi
-      doc["staSsid"] = config.staSsid;
-      doc["apHidden"] = config.apHidden;
-
-      // MQTT
-      doc["mqttHost"] = config.mqttHost;
-      doc["mqttPort"] = config.mqttPort;
-      doc["mqttUser"] = config.mqttUser;
-      doc["mqttSsl"] = config.mqttSsl;
-      doc["mqttStatus"] = MqttClient::isConnected() ? "connected" : "disconnected";
-
-      // 订阅主题
-      JsonArray subs = doc["subTopics"].to<JsonArray>();
-      for (auto &t : config.subTopics) {
-        JsonObject o = subs.add<JsonObject>();
-        o["topic"] = t.topic;
-        o["qos"] = t.qos;
-      }
-
-      // 发布主题
-      JsonArray pubs = doc["pubTopics"].to<JsonArray>();
-      for (auto &t : config.pubTopics) {
-        JsonObject o = pubs.add<JsonObject>();
-        o["topic"] = t.topic;
-        o["qos"] = t.qos;
-      }
-
-      // 传感器
-      JsonArray snrs = doc["sensors"].to<JsonArray>();
-      for (auto &s : config.sensors) {
-        JsonObject o = snrs.add<JsonObject>();
-        o["pin"] = s.pin;
-        o["interval"] = s.interval;
-        o["type"] = s.type;
-        o["enabled"] = s.enabled;
-        o["label"] = s.label;
-        o["persistent"] = s.persistent;
-      }
-
-      // 输入
-      JsonArray ins = doc["inputs"].to<JsonArray>();
-      for (auto &t : config.inputs) {
-        JsonObject o = ins.add<JsonObject>();
-        o["pin"] = t.pin;
-        o["mode"] = t.mode;
-        o["debounceMs"] = t.debounceMs;
-        o["enabled"] = t.enabled;
-        o["label"] = t.label;
-        o["persistent"] = t.persistent;
-      }
-
-      // 定时器
-      JsonArray tmrs = doc["timers"].to<JsonArray>();
-      for (auto &te : config.timers) {
-        JsonObject o = tmrs.add<JsonObject>();
-        o["id"] = te.id;
-        o["type"] = te.type;
-        o["interval"] = te.interval;
-        o["count"] = te.count;
-        o["enabled"] = te.enabled;
-        o["persistent"] = te.persistent;
-        JsonDocument cmds;
-        if (!deserializeJson(cmds, te.commandsJson)) {
-          o["commands"] = cmds;
-        }
-      }
-
-      // 逻辑规则
-      JsonArray rules = doc["logicRules"].to<JsonArray>();
-      for (auto &lr : config.logicRules) {
-        JsonObject o = rules.add<JsonObject>();
-        o["id"] = lr.id;
-        o["operator"] = lr.operator_;
-        o["enabled"] = lr.enabled;
-        o["cooldown"] = lr.cooldown;
-        o["persistent"] = lr.persistent;
-        JsonArray conds = o["conditions"].to<JsonArray>();
-        for (auto &c : lr.conditions) {
-          JsonObject co = conds.add<JsonObject>();
-          co["source"] = c.source;
-          co["pin"] = c.pin;
-          co["op"] = c.op;
-          co["value"] = c.value;
-        }
-        JsonDocument acts;
-        if (!deserializeJson(acts, lr.actionsJson)) {
-          o["actions"] = acts;
-        }
-      }
-
-      // I2C
-      JsonArray i2cs = doc["i2cConfigs"].to<JsonArray>();
-      for (auto &e : config.i2cConfigs) {
-        JsonObject o = i2cs.add<JsonObject>();
-        o["sda"] = e.sda;
-        o["scl"] = e.scl;
-        o["enabled"] = e.enabled;
-      }
-
-      // 1-Wire
-      JsonArray ows = doc["owConfigs"].to<JsonArray>();
-      for (auto &e : config.owConfigs) {
-        JsonObject o = ows.add<JsonObject>();
-        o["pin"] = e.pin;
-        o["enabled"] = e.enabled;
-      }
-
-      // UART
-      JsonArray uarts = doc["uartConfigs"].to<JsonArray>();
-      for (auto &e : config.uartConfigs) {
-        JsonObject o = uarts.add<JsonObject>();
-        o["port"] = e.port;
-        o["tx"] = e.txPin;
-        o["rx"] = e.rxPin;
-        o["baud"] = e.baud;
-        o["dataBits"] = e.dataBits;
-        o["stopBits"] = e.stopBits;
-        o["parity"] = e.parity;
-        o["enabled"] = e.enabled;
-        o["listening"] = e.listening;
-      }
-
-      // SPI
-      JsonArray spis = doc["spiConfigs"].to<JsonArray>();
-      for (auto &e : config.spiConfigs) {
-        JsonObject o = spis.add<JsonObject>();
-        o["port"] = e.port;
-        o["mosi"] = e.mosiPin;
-        o["miso"] = e.misoPin;
-        o["sclk"] = e.sclkPin;
-        o["speed"] = e.speed;
-        o["mode"] = e.mode;
-        o["enabled"] = e.enabled;
-      }
-
-      // Touch
-      JsonArray touches = doc["touchPins"].to<JsonArray>();
-      for (auto &e : config.touchPins) {
-        JsonObject o = touches.add<JsonObject>();
-        o["pin"] = e.pin;
-        o["threshold"] = e.threshold;
-        o["debounceMs"] = e.debounceMs;
-        o["enabled"] = e.enabled;
-        o["label"] = e.label;
-        o["persistent"] = e.persistent;
-      }
-
-
-      // 系统信息
-      doc["batchInterval"] = config.batchInterval;
-      doc["heapFree"] = ESP.getFreeHeap();
-      doc["uptime"] = millis() / 1000;
-      doc["firmware"] = FIRMWARE_VERSION;
-
-      String payload;
-      serializeJson(doc, payload);
-      publishResult(payload);
-      Serial.printf("[DUMP] Published full config (%d bytes)\n", payload.length());
-
-
+  } else if (cmd == "toggle") {
+    int pin = doc["pin"] | -1;
+    if (pin >= 0 && !isValidExternalPin(pin)) {
+      Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
+      return;
     }
-
-
-    else if (cmd == "status") {
+    if (pin >= 0) {
+      GpioControl::digitalToggle(pin);
+      Serial.printf("[GPIO] TOGGLE pin=%d\n", pin);
       GpioControl::publishStatus();
-    } else if (cmd == "restart") {
-      Serial.println("[GPIO] Restarting...");
-      delay(500);
-      ESP.restart();
-    } else if (cmd == "custom") {
-      String action = doc["action"].as<String>();
-      Serial.printf("[GPIO] Custom action: %s\n", action.c_str());
-      if (action == "reset") {
-        config.reset();
-        Serial.println("[GPIO] Config reset, restarting...");
-        delay(500);
-        ESP.restart();
-      } else if (action == "query_mqtt_ota_topic") {
-        JsonDocument resp;
-        resp["type"] = "mqtt_ota_topic";
-        resp["deviceId"] = getDeviceId();
-        resp["otaTopic"] = MQTT_OTA_TOPIC;
-        resp["otaReportTopic"] = MQTT_OTA_REPORT_TOPIC;
-        String p;
-        serializeJson(resp, p);
-        publishResult(p);
-
-        Serial.printf("[MQTT-OTA] Reserved topic: %s, Report: %s\n",
-
-                      MQTT_OTA_TOPIC, MQTT_OTA_REPORT_TOPIC);
-      } else if (action == "query_pin_capabilities") {
-        JsonDocument resp;
-        resp["type"] = "pin_capabilities";
-        resp["deviceId"] = getDeviceId();
-        resp["supportsPwm"] = true;
-        resp["supportsServo"] = true;
-        resp["supportsAdc"] = true;
-        resp["supportsTouch"] = true;
-        resp["maxPwmValue"] = 255;
-        resp["maxServoAngle"] = 180;
-        resp["adcResolution"] = 4095;
-        String p;
-        serializeJson(resp, p);
-        if (mqttClient.connected() && config.pubTopics.size() > 0) {
-          publishResult(p);
-        }
-        Serial.println("[GPIO] Pin capabilities published");
-
-      } else if (action == "query_batch_config") {
-        JsonDocument resp;
-        resp["type"] = "batch_config";
-        resp["deviceId"] = getDeviceId();
-        resp["batchInterval"] = config.batchInterval;
-        String p;
-        serializeJson(resp, p);
-        if (mqttClient.connected() && config.pubTopics.size() > 0) {
-          publishResult(p);
-        }
-        Serial.printf("[BATCH] Config: interval=%d\n", config.batchInterval);
-
-      } else if (action == "set_batch_interval") {
-        int interval = doc["interval"] | 0;
-        config.batchInterval = interval;
-        config.save();
-        Serial.printf("[BATCH] Interval set to %d s\n", interval);
-      }
-    } else if (cmd == "sensor") {
-      handleSensorCommand(doc);
-    } else if (cmd == "input") {
-      handleInputCommand(doc);
-    } else if (cmd == "timer") {
-      handleTimerCommand(doc);
-    } else if (cmd == "logic") {
-      handleLogicCommand(doc);
-    } else if (cmd == "batch_status") {
-      publishBatchStatus();
-    } else if (cmd == "i2c") {
-      I2C::handleCommand(doc);
-    } else if (cmd == "onewire") {
-      OneWire::handleCommand(doc);
-    } else if (cmd == "uart") {
-      UART::handleCommand(doc);
-    } else if (cmd == "spi") {
-      SPIBus::handleCommand(doc);
-    } else if (cmd == "touch") {
-      Touch::handleCommand(doc);
     }
-
-
-    else if (cmd == "rtc") {
-      RTC::handleCommand(doc);
-    } else if (cmd == "rand") {
-      Rand::handleCommand(doc);
-    } else if (cmd == "script") {
-      ScriptEngine::handleCommand(doc);
-    } else if (cmd == "data") {
-      DataEngine::handleCommand(doc);
+  } else if (cmd == "mode") {
+    int pin = doc["pin"] | -1;
+    if (pin >= 0 && !isValidExternalPin(pin)) {
+      Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
+      return;
     }
-
-
-
-    else {
-      Serial.printf("[GPIO] Unknown cmd: %s\n", cmd.c_str());
+    String modeStr = doc["mode"].as<String>();
+    if (pin >= 0) {
+      int m = OUTPUT;
+      if (modeStr == "input") m = INPUT;
+      else if (modeStr == "input_pullup") m = INPUT_PULLUP;
+      GpioControl::setMode(pin, m);
+      Serial.printf("[GPIO] MODE pin=%d mode=%s\n", pin, modeStr.c_str());
+      GpioControl::publishStatus();
     }
-    // ===== ACK 响应 =====
-    if (doc.containsKey("_mid")) {
-      String midStr = doc["_mid"].as<String>();
-      if (midStr.length() > 0) {
-        JsonDocument ack;
-        ack["type"] = "ack";
-        ack["_mid"] = midStr;
-        ack["status"] = "ok";
-        ack["deviceId"] = getDeviceId();
-        String ackJson;
-        serializeJson(ack, ackJson);
-        if (mqttClient.connected() && config.pubTopics.size() > 0) {
-          publishResult(ackJson);
-        }
-      }
+  } else if (cmd == "pwm") {
+    int pin = doc["pin"] | -1;
+    if (pin >= 0 && !isValidExternalPin(pin)) {
+      Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
+      return;
+    }
+    int value = 0;
+    if (doc["value"].is<int>()) {
+      value = doc["value"].as<int>();
+    } else if (doc["value"].is<float>()) {
+      value = (int)doc["value"].as<float>();
+    } else if (doc["value"].is<String>()) {
+      // 兼容 $V: 变量插值后变为字符串的情况
+      value = doc["value"].as<String>().toInt();
+    }
+    if (pin >= 0) {
+      GpioControl::analogSet(pin, value);
+      Serial.printf("[GPIO] PWM pin=%d value=%d\n", pin, value);
+      GpioControl::publishStatus();
     }
   }
 
-  // 串口输入处理
-  static void checkSerialInput() {
-    while (Serial.available()) {
-      char c = Serial.read();
-      if (c == '\n' || c == '\r') {
-        if (serialBuffer.length() > 0) {
-          Serial.printf("\n[SERIAL] Received: %s\n", serialBuffer.c_str());
-          JsonDocument doc;
-          DeserializationError err = deserializeJson(doc, serialBuffer);
-          if (err) {
-            Serial.printf("[SERIAL] JSON error: %s\n", err.c_str());
-          } else {
-            String cmd = doc["cmd"].as<String>();
-            if (cmd == "sensor") {
-              handleSensorCommand(doc);
-            } else if (cmd == "input") {
-              handleInputCommand(doc);
-            } else if (cmd == "timer") {
-              handleTimerCommand(doc);
-            } else if (cmd == "logic") {
-              handleLogicCommand(doc);
-            } else {
-              handleCommand(doc);
-            }
-          }
-          serialBuffer = "";
-        }
+  else if (cmd == "publish") {
+    String topic = doc["topic"].as<String>();
+    String payload;
+    if (doc.containsKey("payload")) {
+      if (doc["payload"].is<JsonObject>() || doc["payload"].is<JsonArray>()) {
+        serializeJson(doc["payload"], payload);
       } else {
-        serialBuffer += c;
+        payload = doc["payload"].as<String>();
       }
+    }
+
+    // ===== 变量插值："$V:varname" → 数字（去掉引号） =====
+    {
+      int pos;
+      int loopGuard = 0;
+      while ((pos = payload.indexOf("\"$V:")) >= 0 && loopGuard < 20) {
+        loopGuard++;
+        String varName = "";
+        int nameStart = pos + 4;
+        for (int i = nameStart; i < (int)payload.length(); i++) {
+          char c = payload.charAt(i);
+          if (isAlphaNumeric(c) || c == '_') varName += c;
+          else break;
+        }
+        if (varName.length() > 0
+            && nameStart + (int)varName.length() < (int)payload.length()
+            && payload.charAt(nameStart + varName.length()) == '"') {
+          float val = ScriptEngine::getVar(varName, 0);
+          int nameEnd = nameStart + varName.length() + 1;
+          payload = payload.substring(0, pos)
+                    + String((int)val)
+                    + payload.substring(nameEnd);
+          Serial.printf("[PUBLISH] Interpolated $V:%s → %d\n", varName.c_str(), (int)val);
+        } else break;
+      }
+    }
+    // ===== 插值结束 =====
+    if (payload.startsWith("{")) {
+      JsonDocument payloadDoc;
+      if (!deserializeJson(payloadDoc, payload)) {
+        payloadDoc["_from"] = getDeviceId();
+        serializeJson(payloadDoc, payload);
+      }
+    }
+
+    if (topic.length() > 0 && MqttClient::isConnected()) {
+      MqttClient::publish(topic.c_str(), payload.c_str());
+      Serial.printf("[MQTT] Publish to %s: %s\n", topic.c_str(), payload.c_str());
     }
   }
 
-  // MQTT OTA 处理
-  static void otaReset() {
-    mqttOtaActive = false;
-    otaInProgress = false;
-    otaTotalSize = 0;
-    otaChunks = 0;
-    otaChunkCount = 0;
-    otaWritten = 0;
-  }
-
-  static void otaReport(const String &status, int progress, uint32_t chunk = 0) {
-    JsonDocument doc;
-    doc["status"] = status;
-    doc["progress"] = progress;
-    doc["chunk"] = chunk;
-    doc["written"] = otaWritten;
-    doc["total"] = otaTotalSize;
-    String json;
-    serializeJson(doc, json);
-    if (mqttClient.connected()) {
-      mqttClient.publish(MQTT_OTA_REPORT_TOPIC, json.c_str());
+  // ═══════════════════════════════════════════════════════════
+  // ★★★ 新增：forward 命令 — 跨设备转发 ★★★
+  // ═══════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════
+  // ★★★ forward 命令 — 跨设备转发 ★★★
+  // ═══════════════════════════════════════════════════════════
+  else if (cmd == "forward") {
+    String target = doc["target"].as<String>();
+    if (target.length() == 0) {
+      Serial.println("[FWD] target required");
+      return;
     }
-    Serial.printf("[MQTT-OTA] Report: %s %d%% (written=%u)\n",
-                  status.c_str(), progress, otaWritten);
-  }
-
-  static void handleOtaMessage(const uint8_t *payload, unsigned int length) {
-    if (payload == nullptr || length == 0) return;
-
-    Serial.printf("[MQTT-OTA] Received %u bytes\n", length);
-
-    if (length > 5 && payload[0] == 0x01) {
-      if (!mqttOtaActive) {
-        Serial.println("[MQTT-OTA] Data without START - ignoring");
-        return;
-      }
-
-      uint32_t chunkIndex = 0;
-      memcpy(&chunkIndex, &payload[1], 4);
-
-      const uint8_t *data = &payload[5];
-      uint32_t dataLen = length - 5;
-
-      otaLastChunk = millis();
-
-      if (!Update.isRunning()) {
-        Serial.println("[MQTT-OTA] Update not running!");
-        otaReset();
-        otaReport("error", 0, chunkIndex);
-        return;
-      }
-
-      size_t written = Update.write(const_cast<uint8_t *>(data), dataLen);
-      if (written != dataLen) {
-        Serial.printf("[MQTT-OTA] Write FAIL chunk %u (wrote %u/%u)\n",
-                      chunkIndex, written, dataLen);
-        Update.printError(Serial);
-        Update.abort();
-        otaReset();
-        otaReport("error", 0, chunkIndex);
-        return;
-      }
-
-      otaWritten += dataLen;
-      otaChunkCount = chunkIndex + 1;
-
-      int progress = 0;
-      if (otaTotalSize > 0) {
-        progress = (int)((otaWritten * 100) / otaTotalSize);
-        if (progress > 99) progress = 99;
-      }
-
-      if (chunkIndex % 64 == 0) {
-        Serial.printf("[MQTT-OTA] Chunk %u, %u/%u bytes, %d%%\n",
-                      chunkIndex, otaWritten, otaTotalSize, progress);
-      }
-
-      otaReport("receiving", progress, chunkIndex);
+    if (!doc.containsKey("payload")) {
+      Serial.println("[FWD] payload required");
       return;
     }
 
-    String cmd = "";
-    cmd.reserve(length + 1);
-    for (unsigned int i = 0; i < length; i++) {
-      cmd += (char)payload[i];
+    // 1. 序列化 payload 为字符串
+    String payloadStr;
+    serializeJson(doc["payload"], payloadStr);
+
+    // 2. $V: 变量插值
+    {
+      int pos;
+      int guard = 0;
+      while ((pos = payloadStr.indexOf("\"$V:")) >= 0 && guard < 20) {
+        guard++;
+        String varName = "";
+        int nameStart = pos + 4;
+        for (int i = nameStart; i < (int)payloadStr.length(); i++) {
+          char c = payloadStr.charAt(i);
+          if (isAlphaNumeric(c) || c == '_') varName += c;
+          else break;
+        }
+        if (varName.length() > 0
+            && nameStart + (int)varName.length() < (int)payloadStr.length()
+            && payloadStr.charAt(nameStart + varName.length()) == '"') {
+          float val = ScriptEngine::getVar(varName, 0);
+          int nameEnd = nameStart + varName.length() + 1;
+          payloadStr = payloadStr.substring(0, pos)
+                       + String((int)val)
+                       + payloadStr.substring(nameEnd);
+          Serial.printf("[FWD] $V:%s → %d\n", varName.c_str(), (int)val);
+        } else break;
+      }
     }
-    Serial.printf("[MQTT-OTA] Text cmd: %s\n", cmd.c_str());
 
-    if (cmd.indexOf("START") >= 0) {
-      Serial.println("[MQTT-OTA] START command received");
+    // 3. 判断 target 是否是自己
+    String myId = getDeviceId();
+    String myName = config.deviceName;
+    bool isSelf = (target == myId) || (myName.length() > 0 && target == myName);
 
-      if (otaInProgress || mqttOtaActive) {
-        Serial.println("[MQTT-OTA] Cleaning stale OTA state");
-        Update.abort();
-        otaReset();
+    if (isSelf) {
+      // ★★★ target 是自己，直接本地执行 payload ★★★
+      JsonDocument payloadDoc;
+      if (!deserializeJson(payloadDoc, payloadStr)) {
+        Serial.printf("[FWD] Local exec: %s\n", payloadStr.c_str());
+        executeCommand(payloadDoc);
+      }
+    } else {
+      // ★★★ target 是其他设备，注入 target 和 _from，通过 DualChannel 发送 ★★★
+      JsonDocument payloadDoc;
+      if (!deserializeJson(payloadDoc, payloadStr)) {
+        payloadDoc["target"] = target;
+        payloadDoc["_from"] = getDeviceId();
+        serializeJson(payloadDoc, payloadStr);
+      }
+      bool ok = DualChannel::sendToTarget(target, payloadStr);
+      Serial.printf("[FWD] → %s (%s): %s\n",
+                    target.c_str(), ok ? "OK" : "FAIL", payloadStr.c_str());
+    }
+  }
+  // ═══════════════════════════════════════════════════════════
+  // ★★★ forward 结束 ★★★
+  // ═══════════════════════════════════════════════════════════
+
+
+  else if (cmd == "rgb") {
+    int rPin = doc["rPin"] | -1;
+    int gPin = doc["gPin"] | -1;
+    int bPin = doc["bPin"] | -1;
+    if ((rPin >= 0 && !isValidExternalPin(rPin)) || (gPin >= 0 && !isValidExternalPin(gPin)) || (bPin >= 0 && !isValidExternalPin(bPin))) {
+      Serial.println("[GPIO] RGB: invalid pin in external pinout");
+      return;
+    }
+    int r = doc["r"] | 0;
+    int g = doc["g"] | 0;
+    int b = doc["b"] | 0;
+    if (rPin >= 0 && gPin >= 0 && bPin >= 0) {
+      GpioControl::analogSet(rPin, r);
+      GpioControl::analogSet(gPin, g);
+      GpioControl::analogSet(bPin, b);
+      Serial.printf("[GPIO] RGB R=%d(pin%d) G=%d(pin%d) B=%d(pin%d)\n",
+                    r, rPin, g, gPin, b, bPin);
+      GpioControl::publishStatus();
+    } else {
+      Serial.println("[GPIO] RGB: rPin/gPin/bPin all required");
+    }
+  } else if (cmd == "servo") {
+    int pin = doc["pin"] | -1;
+    if (pin >= 0 && !isValidExternalPin(pin)) {
+      Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
+      return;
+    }
+    int angle = doc["angle"] | 90;
+    if (pin >= 0) {
+      ServoEntry *se = findOrAddServo(pin);
+      if (se) {
+        if (!se->attached) {
+          se->servo.attach(pin);
+          se->attached = true;
+          Serial.printf("[GPIO] SERVO attached pin=%d\n", pin);
+        }
+        se->servo.write(angle);
+        se->angle = angle;
+        Serial.printf("[GPIO] SERVO pin=%d angle=%d\n", pin, angle);
+      }
+    } else {
+      Serial.println("[GPIO] SERVO: pin required");
+    }
+  } else if (cmd == "servo_detach") {
+    int pin = doc["pin"] | -1;
+    if (pin >= 0 && !isValidExternalPin(pin)) {
+      Serial.printf("[GPIO] REJECTED: servo_detach pin=%d\n", pin);
+      return;
+    }
+    if (pin >= 0) {
+      bool found = false;
+      for (int i = 0; i < servoCount; i++) {
+        if (servoList[i].pin == pin) {
+          if (servoList[i].attached) {
+            servoList[i].servo.detach();
+            servoList[i].attached = false;
+          }
+          found = true;
+          break;
+        }
+      }
+      // ★ 不管 servoList 里有没有，都强制释放 LEDC 通道
+      ledcDetach(pin);
+      pinMode(pin, OUTPUT);
+      digitalWrite(pin, LOW);
+      Serial.printf("[GPIO] SERVO_DETACH pin=%d (found=%s)\n",
+                    pin, found ? "yes" : "no");
+    }
+  }
+
+
+  else if (cmd == "pulse_in") {
+    int pin = doc["pin"] | -1;
+    if (pin < 0 || !isValidExternalPin(pin)) {
+      Serial.println("[PULSE] REJECTED: invalid pin");
+      return;
+    }
+    int trigPin = doc["trig"] | -1;
+    if (trigPin >= 0 && !isValidExternalPin(trigPin)) {
+      Serial.printf("[PULSE] REJECTED: trig=%d\n", trigPin);
+      return;
+    }
+    String state = doc["state"] | String("high");
+    int timeout = doc["timeout"] | 30000;
+    int samples = doc["samples"] | 1;
+    if (samples < 1) samples = 1;
+    if (samples > 20) samples = 20;
+
+    int level = (state == "low") ? LOW : HIGH;
+    long medianDuration = GpioControl::measurePulse(pin, trigPin, level, timeout, samples);
+
+    if (doc.containsKey("result_var")) {
+      String varName = doc["result_var"].as<String>();
+      if (varName.length() > 0)
+        ScriptEngine::setVar(varName, (float)medianDuration, false);
+    }
+
+    JsonDocument resp;
+    resp["type"] = "pulse_in";
+    resp["deviceId"] = getDeviceId();
+    resp["pin"] = pin;
+    resp["state"] = state;
+    resp["duration"] = medianDuration;
+    resp["samples"] = samples;
+    String p;
+    serializeJson(resp, p);
+    if (MqttClient::isConnected() && config.pubTopics.size() > 0)
+      MqttClient::publish(config.pubTopics[0].topic.c_str(), p.c_str());
+    Serial.printf("[PULSE] pin=%d state=%s duration=%ld us (%d samples)\n",
+                  pin, state.c_str(), medianDuration, samples);
+  }
+
+  // ★ 新增：音频输出
+  else if (cmd == "tone") {
+    int pin = doc["pin"] | -1;
+    if (pin < 0 || !isValidExternalPin(pin)) {
+      Serial.printf("[TONE] REJECTED: pin=%d\n", pin);
+      return;
+    }
+    unsigned int freq = doc["freq"] | 0;
+    GpioControl::toneSet(pin, freq);
+    Serial.printf("[TONE] pin=%d freq=%u\n", pin, freq);
+  }
+
+
+
+
+  else if (cmd == "batch") {
+    int batchDepth = 0;
+    if (doc.containsKey("_bd")) batchDepth = doc["_bd"].as<int>();
+    if (batchDepth >= 3) {
+      Serial.println("[BATCH] Max depth 3 reached, skipped");
+      return;
+    }
+    JsonArray cmds = doc["commands"].as<JsonArray>();
+    Serial.printf("[GPIO] BATCH: %u commands (depth=%d)\n", cmds.size(), batchDepth);
+    for (JsonObject c : cmds) {
+      JsonDocument tmp;
+      tmp.set(c);
+      tmp["_bd"] = batchDepth + 1;
+      handleCommand(tmp, fromMqtt);
+    }
+  }
+
+
+  else if (cmd == "clear") {
+    Serial.println("[GPIO] Clearing all pins");
+
+    // 1. 保存定时器原始状态，然后禁用
+    std::vector<bool> timerStates;
+    for (auto &t : TimerEngine::getList()) {
+      timerStates.push_back(t.enabled);
+      t.enabled = false;
+    }
+
+    // 2. 保存逻辑规则原始状态，然后禁用
+    std::vector<bool> logicStates;
+    for (auto &r : LogicEngine::getList()) {
+      logicStates.push_back(r.enabled);
+      r.enabled = false;
+    }
+
+    // 3. 清除所有引脚
+    for (int pin = 0; pin < 48; pin++) {
+      int mode = GpioControl::getPinMode(pin);
+      if (mode == OUTPUT) {
+        analogWrite(pin, 0);
+        digitalWrite(pin, LOW);
+        Serial.printf("[GPIO] Cleared pin %d\n", pin);
+      }
+    }
+
+    // 4. 分离所有舵机
+    for (int i = 0; i < servoCount; i++) {
+      if (servoList[i].attached) {
+        servoList[i].servo.detach();
+        servoList[i].attached = false;
+        Serial.printf("[GPIO] Detached servo pin %d\n", servoList[i].pin);
+      }
+    }
+
+    // 5. 重置 GPIO 运行时记录
+    GpioControl::init();
+
+    // 6. 原样恢复定时器状态（不改 RTC 相关的触发时间）
+    for (size_t i = 0; i < TimerEngine::getList().size(); i++) {
+      auto &t = TimerEngine::getList()[i];
+      t.enabled = timerStates[i];
+      // 如果原来是启用的，重置执行计数让它从干净状态重新开始
+      if (t.enabled) {
+        t.executed = 0;
+        t.lastRun = millis();
+        t.startTime = millis();
+      }
+    }
+
+    // 7. 原样恢复逻辑规则状态
+    for (size_t i = 0; i < LogicEngine::getList().size(); i++) {
+      auto &r = LogicEngine::getList()[i];
+      r.enabled = logicStates[i];
+      // 如果原来是启用的，重置边沿检测从干净状态重新判断
+      if (r.enabled) {
+        r.prevCondition = false;
+        r.lastTrigger = 0;
+      }
+    }
+
+    // 8. RTC 定时任务不动（它们触发时间没到就不会执行，和引脚状态无关）
+
+    // 9. 发布状态
+    GpioControl::publishStatus();
+
+    Serial.println("[GPIO] All cleared, tasks restored to original state");
+  }
+
+
+  else if (cmd == "dump") {
+    JsonDocument doc;
+    doc["type"] = "config_dump";
+    doc["deviceId"] = getDeviceId();
+    doc["deviceName"] = config.deviceName;
+
+    // WiFi
+    doc["staSsid"] = config.staSsid;
+    doc["apHidden"] = config.apHidden;
+
+    // MQTT
+    doc["mqttHost"] = config.mqttHost;
+    doc["mqttPort"] = config.mqttPort;
+    doc["mqttUser"] = config.mqttUser;
+    doc["mqttSsl"] = config.mqttSsl;
+    doc["mqttStatus"] = MqttClient::isConnected() ? "connected" : "disconnected";
+
+    // 订阅主题
+    JsonArray subs = doc["subTopics"].to<JsonArray>();
+    for (auto &t : config.subTopics) {
+      JsonObject o = subs.add<JsonObject>();
+      o["topic"] = t.topic;
+      o["qos"] = t.qos;
+    }
+
+    // 发布主题
+    JsonArray pubs = doc["pubTopics"].to<JsonArray>();
+    for (auto &t : config.pubTopics) {
+      JsonObject o = pubs.add<JsonObject>();
+      o["topic"] = t.topic;
+      o["qos"] = t.qos;
+    }
+
+    // 传感器
+    JsonArray snrs = doc["sensors"].to<JsonArray>();
+    for (auto &s : config.sensors) {
+      JsonObject o = snrs.add<JsonObject>();
+      o["pin"] = s.pin;
+      o["interval"] = s.interval;
+      o["type"] = s.type;
+      o["enabled"] = s.enabled;
+      o["label"] = s.label;
+      o["persistent"] = s.persistent;
+    }
+
+    // 输入
+    JsonArray ins = doc["inputs"].to<JsonArray>();
+    for (auto &t : config.inputs) {
+      JsonObject o = ins.add<JsonObject>();
+      o["pin"] = t.pin;
+      o["mode"] = t.mode;
+      o["debounceMs"] = t.debounceMs;
+      o["enabled"] = t.enabled;
+      o["label"] = t.label;
+      o["persistent"] = t.persistent;
+    }
+
+    // 定时器
+    JsonArray tmrs = doc["timers"].to<JsonArray>();
+    for (auto &te : config.timers) {
+      JsonObject o = tmrs.add<JsonObject>();
+      o["id"] = te.id;
+      o["type"] = te.type;
+      o["interval"] = te.interval;
+      o["count"] = te.count;
+      o["enabled"] = te.enabled;
+      o["persistent"] = te.persistent;
+      JsonDocument cmds;
+      if (!deserializeJson(cmds, te.commandsJson)) {
+        o["commands"] = cmds;
+      }
+    }
+
+    // 逻辑规则
+    JsonArray rules = doc["logicRules"].to<JsonArray>();
+    for (auto &lr : config.logicRules) {
+      JsonObject o = rules.add<JsonObject>();
+      o["id"] = lr.id;
+      o["operator"] = lr.operator_;
+      o["enabled"] = lr.enabled;
+      o["cooldown"] = lr.cooldown;
+      o["persistent"] = lr.persistent;
+      JsonArray conds = o["conditions"].to<JsonArray>();
+      for (auto &c : lr.conditions) {
+        JsonObject co = conds.add<JsonObject>();
+        co["source"] = c.source;
+        co["pin"] = c.pin;
+        co["op"] = c.op;
+        co["value"] = c.value;
+      }
+      JsonDocument acts;
+      if (!deserializeJson(acts, lr.actionsJson)) {
+        o["actions"] = acts;
+      }
+    }
+
+    // I2C
+    JsonArray i2cs = doc["i2cConfigs"].to<JsonArray>();
+    for (auto &e : config.i2cConfigs) {
+      JsonObject o = i2cs.add<JsonObject>();
+      o["sda"] = e.sda;
+      o["scl"] = e.scl;
+      o["enabled"] = e.enabled;
+    }
+
+    // 1-Wire
+    JsonArray ows = doc["owConfigs"].to<JsonArray>();
+    for (auto &e : config.owConfigs) {
+      JsonObject o = ows.add<JsonObject>();
+      o["pin"] = e.pin;
+      o["enabled"] = e.enabled;
+    }
+
+    // UART
+    JsonArray uarts = doc["uartConfigs"].to<JsonArray>();
+    for (auto &e : config.uartConfigs) {
+      JsonObject o = uarts.add<JsonObject>();
+      o["port"] = e.port;
+      o["tx"] = e.txPin;
+      o["rx"] = e.rxPin;
+      o["baud"] = e.baud;
+      o["dataBits"] = e.dataBits;
+      o["stopBits"] = e.stopBits;
+      o["parity"] = e.parity;
+      o["enabled"] = e.enabled;
+      o["listening"] = e.listening;
+    }
+
+    // SPI
+    JsonArray spis = doc["spiConfigs"].to<JsonArray>();
+    for (auto &e : config.spiConfigs) {
+      JsonObject o = spis.add<JsonObject>();
+      o["port"] = e.port;
+      o["mosi"] = e.mosiPin;
+      o["miso"] = e.misoPin;
+      o["sclk"] = e.sclkPin;
+      o["speed"] = e.speed;
+      o["mode"] = e.mode;
+      o["enabled"] = e.enabled;
+    }
+
+    // Touch
+    JsonArray touches = doc["touchPins"].to<JsonArray>();
+    for (auto &e : config.touchPins) {
+      JsonObject o = touches.add<JsonObject>();
+      o["pin"] = e.pin;
+      o["threshold"] = e.threshold;
+      o["debounceMs"] = e.debounceMs;
+      o["enabled"] = e.enabled;
+      o["label"] = e.label;
+      o["persistent"] = e.persistent;
+    }
+
+
+    // 系统信息
+    doc["batchInterval"] = config.batchInterval;
+    doc["heapFree"] = ESP.getFreeHeap();
+    doc["uptime"] = millis() / 1000;
+    doc["firmware"] = FIRMWARE_VERSION;
+
+    String payload;
+    serializeJson(doc, payload);
+    publishResult(payload);
+    Serial.printf("[DUMP] Published full config (%d bytes)\n", payload.length());
+
+
+  }
+
+
+  else if (cmd == "status") {
+    GpioControl::publishStatus();
+  } else if (cmd == "restart") {
+    Serial.println("[GPIO] Restarting...");
+    delay(500);
+    ESP.restart();
+  } else if (cmd == "custom") {
+    String action = doc["action"].as<String>();
+    Serial.printf("[GPIO] Custom action: %s\n", action.c_str());
+    if (action == "reset") {
+      config.reset();
+      Serial.println("[GPIO] Config reset, restarting...");
+      delay(500);
+      ESP.restart();
+    } else if (action == "query_mqtt_ota_topic") {
+      JsonDocument resp;
+      resp["type"] = "mqtt_ota_topic";
+      resp["deviceId"] = getDeviceId();
+      resp["otaTopic"] = MQTT_OTA_TOPIC;
+      resp["otaReportTopic"] = MQTT_OTA_REPORT_TOPIC;
+      String p;
+      serializeJson(resp, p);
+      publishResult(p);
+
+      Serial.printf("[MQTT-OTA] Reserved topic: %s, Report: %s\n",
+
+                    MQTT_OTA_TOPIC, MQTT_OTA_REPORT_TOPIC);
+    } else if (action == "query_pin_capabilities") {
+      JsonDocument resp;
+      resp["type"] = "pin_capabilities";
+      resp["deviceId"] = getDeviceId();
+      resp["supportsPwm"] = true;
+      resp["supportsServo"] = true;
+      resp["supportsAdc"] = true;
+      resp["supportsTouch"] = true;
+      resp["maxPwmValue"] = 255;
+      resp["maxServoAngle"] = 180;
+      resp["adcResolution"] = 4095;
+      String p;
+      serializeJson(resp, p);
+      if (mqttClient.connected() && config.pubTopics.size() > 0) {
+        publishResult(p);
+      }
+      Serial.println("[GPIO] Pin capabilities published");
+
+    } else if (action == "query_batch_config") {
+      JsonDocument resp;
+      resp["type"] = "batch_config";
+      resp["deviceId"] = getDeviceId();
+      resp["batchInterval"] = config.batchInterval;
+      String p;
+      serializeJson(resp, p);
+      if (mqttClient.connected() && config.pubTopics.size() > 0) {
+        publishResult(p);
+      }
+      Serial.printf("[BATCH] Config: interval=%d\n", config.batchInterval);
+
+    } else if (action == "set_batch_interval") {
+      int interval = doc["interval"] | 0;
+      config.batchInterval = interval;
+      config.save();
+      Serial.printf("[BATCH] Interval set to %d s\n", interval);
+    }
+  } else if (cmd == "sensor") {
+    handleSensorCommand(doc);
+  } else if (cmd == "input") {
+    handleInputCommand(doc);
+  } else if (cmd == "timer") {
+    handleTimerCommand(doc);
+  } else if (cmd == "logic") {
+    handleLogicCommand(doc);
+  } else if (cmd == "batch_status") {
+    publishBatchStatus();
+  } else if (cmd == "i2c") {
+    I2C::handleCommand(doc);
+  } else if (cmd == "onewire") {
+    OneWire::handleCommand(doc);
+  } else if (cmd == "uart") {
+    UART::handleCommand(doc);
+  } else if (cmd == "spi") {
+    SPIBus::handleCommand(doc);
+  } else if (cmd == "touch") {
+    Touch::handleCommand(doc);
+  } else if (cmd == "encoder") {  // ★ 新增
+    Encoder::handleCommand(doc);
+  }
+
+
+  else if (cmd == "rtc") {
+    RTC::handleCommand(doc);
+  } else if (cmd == "rand") {
+    Rand::handleCommand(doc);
+  } else if (cmd == "script") {
+    ScriptEngine::handleCommand(doc);
+  } else if (cmd == "data") {
+    DataEngine::handleCommand(doc);
+  }
+
+
+
+  else {
+    Serial.printf("[GPIO] Unknown cmd: %s\n", cmd.c_str());
+  }
+  // ===== ACK 响应 =====
+  if (doc.containsKey("_mid")) {
+    String midStr = doc["_mid"].as<String>();
+    if (midStr.length() > 0) {
+      JsonDocument ack;
+      ack["type"] = "ack";
+      ack["_mid"] = midStr;
+      ack["status"] = "ok";
+      ack["deviceId"] = getDeviceId();
+      String ackJson;
+      serializeJson(ack, ackJson);
+      if (mqttClient.connected() && config.pubTopics.size() > 0) {
+        publishResult(ackJson);
+      }
+    }
+  }
+}
+
+// 串口输入处理
+static void checkSerialInput() {
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (serialBuffer.length() > 0) {
+        Serial.printf("\n[SERIAL] Received: %s\n", serialBuffer.c_str());
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, serialBuffer);
+        if (err) {
+          Serial.printf("[SERIAL] JSON error: %s\n", err.c_str());
+        } else {
+          String cmd = doc["cmd"].as<String>();
+          if (cmd == "sensor") {
+            handleSensorCommand(doc);
+          } else if (cmd == "input") {
+            handleInputCommand(doc);
+          } else if (cmd == "timer") {
+            handleTimerCommand(doc);
+          } else if (cmd == "logic") {
+            handleLogicCommand(doc);
+          } else {
+            handleCommand(doc);
+          }
+        }
+        serialBuffer = "";
+      }
+    } else {
+      serialBuffer += c;
+    }
+  }
+}
+
+// MQTT OTA 处理
+static void otaReset() {
+  mqttOtaActive = false;
+  otaInProgress = false;
+  otaTotalSize = 0;
+  otaChunks = 0;
+  otaChunkCount = 0;
+  otaWritten = 0;
+}
+
+static void otaReport(const String &status, int progress, uint32_t chunk = 0) {
+  JsonDocument doc;
+  doc["status"] = status;
+  doc["progress"] = progress;
+  doc["chunk"] = chunk;
+  doc["written"] = otaWritten;
+  doc["total"] = otaTotalSize;
+  String json;
+  serializeJson(doc, json);
+  if (mqttClient.connected()) {
+    mqttClient.publish(MQTT_OTA_REPORT_TOPIC, json.c_str());
+  }
+  Serial.printf("[MQTT-OTA] Report: %s %d%% (written=%u)\n",
+                status.c_str(), progress, otaWritten);
+}
+
+static void handleOtaMessage(const uint8_t *payload, unsigned int length) {
+  if (payload == nullptr || length == 0) return;
+
+  Serial.printf("[MQTT-OTA] Received %u bytes\n", length);
+
+  if (length > 5 && payload[0] == 0x01) {
+    if (!mqttOtaActive) {
+      Serial.println("[MQTT-OTA] Data without START - ignoring");
+      return;
+    }
+
+    uint32_t chunkIndex = 0;
+    memcpy(&chunkIndex, &payload[1], 4);
+
+    const uint8_t *data = &payload[5];
+    uint32_t dataLen = length - 5;
+
+    otaLastChunk = millis();
+
+    if (!Update.isRunning()) {
+      Serial.println("[MQTT-OTA] Update not running!");
+      otaReset();
+      otaReport("error", 0, chunkIndex);
+      return;
+    }
+
+    size_t written = Update.write(const_cast<uint8_t *>(data), dataLen);
+    if (written != dataLen) {
+      Serial.printf("[MQTT-OTA] Write FAIL chunk %u (wrote %u/%u)\n",
+                    chunkIndex, written, dataLen);
+      Update.printError(Serial);
+      Update.abort();
+      otaReset();
+      otaReport("error", 0, chunkIndex);
+      return;
+    }
+
+    otaWritten += dataLen;
+    otaChunkCount = chunkIndex + 1;
+
+    int progress = 0;
+    if (otaTotalSize > 0) {
+      progress = (int)((otaWritten * 100) / otaTotalSize);
+      if (progress > 99) progress = 99;
+    }
+
+    if (chunkIndex % 64 == 0) {
+      Serial.printf("[MQTT-OTA] Chunk %u, %u/%u bytes, %d%%\n",
+                    chunkIndex, otaWritten, otaTotalSize, progress);
+    }
+
+    otaReport("receiving", progress, chunkIndex);
+    return;
+  }
+
+  String cmd = "";
+  cmd.reserve(length + 1);
+  for (unsigned int i = 0; i < length; i++) {
+    cmd += (char)payload[i];
+  }
+  Serial.printf("[MQTT-OTA] Text cmd: %s\n", cmd.c_str());
+
+  if (cmd.indexOf("START") >= 0) {
+    Serial.println("[MQTT-OTA] START command received");
+
+    if (otaInProgress || mqttOtaActive) {
+      Serial.println("[MQTT-OTA] Cleaning stale OTA state");
+      Update.abort();
+      otaReset();
+    }
+
+    otaTotalSize = 0;
+    otaChunks = 0;
+
+    if (cmd.startsWith("{")) {
+      JsonDocument doc;
+      DeserializationError err = deserializeJson(doc, cmd);
+      if (err) {
+        Serial.printf("[MQTT-OTA] JSON parse error: %s\n", err.c_str());
+        otaReport("error", 0);
+        return;
       }
 
-      otaTotalSize = 0;
-      otaChunks = 0;
+      otaTotalSize = doc["size"] | 0;
+      otaChunks = doc["chunks"] | 0;
 
-      if (cmd.startsWith("{")) {
-        JsonDocument doc;
-        DeserializationError err = deserializeJson(doc, cmd);
-        if (err) {
-          Serial.printf("[MQTT-OTA] JSON parse error: %s\n", err.c_str());
-          otaReport("error", 0);
+      const char *targetPtr = doc["target"];
+      if (targetPtr && strlen(targetPtr) > 0) {
+        String myId = getDeviceId();
+        if (String(targetPtr) != myId) {
+          Serial.printf("[MQTT-OTA] Not for me (target=%s, I am %s)\n",
+                        targetPtr, myId.c_str());
+          return;
+        }
+      }
+    }
+
+    Serial.printf("[MQTT-OTA] Size=%u, Chunks=%u, FreeHeap=%u\n",
+                  otaTotalSize, otaChunks, ESP.getFreeHeap());
+
+    bool beginOk = false;
+    if (otaTotalSize > 0) {
+      beginOk = Update.begin(otaTotalSize);
+    } else {
+      beginOk = Update.begin(UPDATE_SIZE_UNKNOWN);
+    }
+
+    if (beginOk) {
+      otaInProgress = true;
+      mqttOtaActive = true;
+      otaWritten = 0;
+      otaChunkCount = 0;
+      otaLastChunk = millis();
+      Serial.println("[MQTT-OTA] Update.begin OK");
+      otaReport("started", 0);
+    } else {
+      Serial.println("[MQTT-OTA] Update.begin FAILED!");
+      Update.printError(Serial);
+    }
+    return;
+  }
+
+  if (cmd == "DONE") {
+    if (!mqttOtaActive) {
+      Serial.println("[MQTT-OTA] DONE without START");
+      return;
+    }
+
+    Serial.printf("[MQTT-OTA] Done, %u bytes, %u chunks\n",
+                  otaWritten, otaChunkCount);
+    otaReport("finalizing", 99);
+
+    if (Update.end(true)) {
+      Serial.println("[MQTT-OTA] SUCCESS - restarting");
+      otaReport("success", 100);
+      delay(1000);
+      ESP.restart();
+    } else {
+      Serial.println("[MQTT-OTA] Update.end FAILED");
+      Update.printError(Serial);
+      otaReset();
+      otaReport("error", 0);
+    }
+    return;
+  }
+
+  if (cmd == "ABORT") {
+    Serial.println("[MQTT-OTA] Aborted");
+    Update.abort();
+    otaReset();
+    otaReport("aborted", 0);
+    return;
+  }
+
+  Serial.printf("[MQTT-OTA] Unknown command: %s\n", cmd.c_str());
+}
+
+// MQTT 消息回调
+static void onMqttMessage(char *topic, byte *payload, unsigned int length) {
+  String msg = "";
+  for (unsigned int i = 0; i < length; i++) {
+    msg += (char)payload[i];
+  }
+  Serial.printf("[MQTT] Data: %s = %s\n", topic, msg.c_str());
+
+  if (!msg.startsWith("{")) return;
+
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, msg);
+  if (err) {
+    Serial.printf("[MQTT] JSON error: %s\n", err.c_str());
+    return;
+  }
+
+  if (doc.containsKey("_from")) {
+    String from = doc["_from"].as<String>();
+    if (from.length() > 0 && from == getDeviceId()) {
+      Serial.printf("[MQTT] Echo filtered (from self) on %s\n", topic);
+      return;
+    }
+  }
+
+  String cmd = doc["cmd"].as<String>();
+  if (cmd == "sensor") {
+    handleSensorCommand(doc);
+  } else if (cmd == "input") {
+    handleInputCommand(doc);
+  } else if (cmd == "timer") {
+    handleTimerCommand(doc);
+  } else if (cmd == "logic") {
+    handleLogicCommand(doc);
+  } else {
+    handleCommand(doc, true);
+  }
+}
+
+static void mqttCallback(char *topic, byte *payload, unsigned int length) {
+  Serial.printf("[MQTT] Msg: %s (%u bytes)\n", topic, length);
+
+  if (strcmp(topic, MQTT_OTA_TOPIC) == 0) {
+    handleOtaMessage((const uint8_t *)payload, length);
+    return;
+  }
+
+  onMqttMessage(topic, payload, length);
+}
+
+// MqttClient 命名空间
+namespace MqttClient {
+
+void init() {
+  connected = false;
+  mqttOtaActive = false;
+  otaInProgress = false;
+  otaWritten = 0;
+  otaTotalSize = 0;
+  lastBatchReport = millis();
+  mqttState = MQTT_IDLE;
+  mqttStateTime = millis();
+  mqttReconnectBackoff = 2000;
+}
+
+void loop() {
+
+  // MQTT 开关：关闭时不处理任何 MQTT 逻辑
+  if (!config.mqttEnabled) {
+    if (connected) {
+      mqttClient.disconnect();
+      connected = false;
+      mqttState = MQTT_IDLE;
+      Serial.println("[MQTT] Disabled by config");
+    }
+    return;
+  }
+  // MQTT 未连接时，允许串口命令
+  if (!mqttClient.connected()) {
+    checkSerialInput();
+  }
+
+  if (!WiFi.isConnected()) {
+    if (connected) {
+      Serial.println("[MQTT] No WiFi");
+      connected = false;
+      mqttState = MQTT_IDLE;
+      mqttStateTime = millis();
+      mqttReconnectBackoff = 2000;
+      sslPreConnected = false;
+    }
+    return;
+  }
+
+  // 已连接：正常处理
+  if (mqttState == MQTT_LINKED && mqttClient.connected()) {
+    mqttClient.loop();
+
+    // MQTT OTA 超时检测
+    if (mqttOtaActive && millis() - otaLastChunk > 30000) {
+      Serial.println("[MQTT-OTA] Timeout - aborting");
+      Update.abort();
+      otaReset();
+      otaReport("timeout", 0);
+    }
+
+    // 批量状态上报
+    if (config.batchInterval > 0) {
+      unsigned long intervalMs = (unsigned long)config.batchInterval * 1000;
+      if (millis() - lastBatchReport >= intervalMs) {
+        lastBatchReport = millis();
+        publishBatchStatus();
+      }
+    }
+
+    // 检测连接断开
+    if (!mqttClient.connected()) {
+      Serial.println("[MQTT] Connection lost");
+      connected = false;
+      mqttState = MQTT_IDLE;
+      mqttStateTime = millis();
+      mqttReconnectBackoff = 2000;
+      sslPreConnected = false;
+    }
+    return;
+  }
+
+  // 未连接：非阻塞重连状态机
+  connected = false;
+  unsigned long now = millis();
+
+  switch (mqttState) {
+
+    case MQTT_IDLE:
+      {
+        if (now - mqttStateTime < mqttReconnectBackoff) return;
+
+        if (config.mqttHost.length() == 0) {
+          mqttStateTime = now;
+          mqttReconnectBackoff = MQTT_MAX_BACKOFF;
+          Serial.println("[MQTT] No host configured, waiting...");
           return;
         }
 
-        otaTotalSize = doc["size"] | 0;
-        otaChunks = doc["chunks"] | 0;
+        pendingClientId = config.mqttClientId.length() > 0
+                            ? config.mqttClientId
+                            : getDeviceId();
 
-        const char *targetPtr = doc["target"];
-        if (targetPtr && strlen(targetPtr) > 0) {
-          String myId = getDeviceId();
-          if (String(targetPtr) != myId) {
-            Serial.printf("[MQTT-OTA] Not for me (target=%s, I am %s)\n",
-                          targetPtr, myId.c_str());
-            return;
-          }
+        if (config.mqttSsl) {
+          sslClient.setInsecure();
+          mqttClient.setClient(sslClient);
+        } else {
+          mqttClient.setClient(wifiClient);
         }
-      }
-
-      Serial.printf("[MQTT-OTA] Size=%u, Chunks=%u, FreeHeap=%u\n",
-                    otaTotalSize, otaChunks, ESP.getFreeHeap());
-
-      bool beginOk = false;
-      if (otaTotalSize > 0) {
-        beginOk = Update.begin(otaTotalSize);
-      } else {
-        beginOk = Update.begin(UPDATE_SIZE_UNKNOWN);
-      }
-
-      if (beginOk) {
-        otaInProgress = true;
-        mqttOtaActive = true;
-        otaWritten = 0;
-        otaChunkCount = 0;
-        otaLastChunk = millis();
-        Serial.println("[MQTT-OTA] Update.begin OK");
-        otaReport("started", 0);
-      } else {
-        Serial.println("[MQTT-OTA] Update.begin FAILED!");
-        Update.printError(Serial);
-      }
-      return;
-    }
-
-    if (cmd == "DONE") {
-      if (!mqttOtaActive) {
-        Serial.println("[MQTT-OTA] DONE without START");
-        return;
-      }
-
-      Serial.printf("[MQTT-OTA] Done, %u bytes, %u chunks\n",
-                    otaWritten, otaChunkCount);
-      otaReport("finalizing", 99);
-
-      if (Update.end(true)) {
-        Serial.println("[MQTT-OTA] SUCCESS - restarting");
-        otaReport("success", 100);
-        delay(1000);
-        ESP.restart();
-      } else {
-        Serial.println("[MQTT-OTA] Update.end FAILED");
-        Update.printError(Serial);
-        otaReset();
-        otaReport("error", 0);
-      }
-      return;
-    }
-
-    if (cmd == "ABORT") {
-      Serial.println("[MQTT-OTA] Aborted");
-      Update.abort();
-      otaReset();
-      otaReport("aborted", 0);
-      return;
-    }
-
-    Serial.printf("[MQTT-OTA] Unknown command: %s\n", cmd.c_str());
-  }
-
-  // MQTT 消息回调
-  static void onMqttMessage(char *topic, byte *payload, unsigned int length) {
-    String msg = "";
-    for (unsigned int i = 0; i < length; i++) {
-      msg += (char)payload[i];
-    }
-    Serial.printf("[MQTT] Data: %s = %s\n", topic, msg.c_str());
-
-    if (!msg.startsWith("{")) return;
-
-    JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, msg);
-    if (err) {
-      Serial.printf("[MQTT] JSON error: %s\n", err.c_str());
-      return;
-    }
-
-    if (doc.containsKey("_from")) {
-        String from = doc["_from"].as<String>();
-        if (from.length() > 0 && from == getDeviceId()) {
-            Serial.printf("[MQTT] Echo filtered (from self) on %s\n", topic);
-            return;
-        }
-    }
-
-    String cmd = doc["cmd"].as<String>();
-    if (cmd == "sensor") {
-      handleSensorCommand(doc);
-    } else if (cmd == "input") {
-      handleInputCommand(doc);
-    } else if (cmd == "timer") {
-      handleTimerCommand(doc);
-    } else if (cmd == "logic") {
-      handleLogicCommand(doc);
-    } else {
-      handleCommand(doc, true);
-    }
-  }
-
-  static void mqttCallback(char *topic, byte *payload, unsigned int length) {
-    Serial.printf("[MQTT] Msg: %s (%u bytes)\n", topic, length);
-
-    if (strcmp(topic, MQTT_OTA_TOPIC) == 0) {
-      handleOtaMessage((const uint8_t *)payload, length);
-      return;
-    }
-
-    onMqttMessage(topic, payload, length);
-  }
-
-  // MqttClient 命名空间
-  namespace MqttClient {
-
-  void init() {
-    connected = false;
-    mqttOtaActive = false;
-    otaInProgress = false;
-    otaWritten = 0;
-    otaTotalSize = 0;
-    lastBatchReport = millis();
-    mqttState = MQTT_IDLE;
-    mqttStateTime = millis();
-    mqttReconnectBackoff = 2000;
-  }
-
-  void loop() {
-
-    // MQTT 开关：关闭时不处理任何 MQTT 逻辑
-    if (!config.mqttEnabled) {
-      if (connected) {
-        mqttClient.disconnect();
-        connected = false;
-        mqttState = MQTT_IDLE;
-        Serial.println("[MQTT] Disabled by config");
-      }
-      return;
-    }
-    // MQTT 未连接时，允许串口命令
-    if (!mqttClient.connected()) {
-      checkSerialInput();
-    }
-
-    if (!WiFi.isConnected()) {
-      if (connected) {
-        Serial.println("[MQTT] No WiFi");
-        connected = false;
-        mqttState = MQTT_IDLE;
-        mqttStateTime = millis();
-        mqttReconnectBackoff = 2000;
+        mqttClient.setCallback(mqttCallback);
+        mqttClient.setBufferSize(4096);
         sslPreConnected = false;
-      }
-      return;
-    }
-
-    // 已连接：正常处理
-    if (mqttState == MQTT_LINKED && mqttClient.connected()) {
-      mqttClient.loop();
-
-      // MQTT OTA 超时检测
-      if (mqttOtaActive && millis() - otaLastChunk > 30000) {
-        Serial.println("[MQTT-OTA] Timeout - aborting");
-        Update.abort();
-        otaReset();
-        otaReport("timeout", 0);
-      }
-
-      // 批量状态上报
-      if (config.batchInterval > 0) {
-        unsigned long intervalMs = (unsigned long)config.batchInterval * 1000;
-        if (millis() - lastBatchReport >= intervalMs) {
-          lastBatchReport = millis();
-          publishBatchStatus();
-        }
-      }
-
-      // 检测连接断开
-      if (!mqttClient.connected()) {
-        Serial.println("[MQTT] Connection lost");
-        connected = false;
-        mqttState = MQTT_IDLE;
-        mqttStateTime = millis();
-        mqttReconnectBackoff = 2000;
-        sslPreConnected = false;
-      }
-      return;
-    }
-
-    // 未连接：非阻塞重连状态机
-    connected = false;
-    unsigned long now = millis();
-
-    switch (mqttState) {
-
-      case MQTT_IDLE:
-        {
-          if (now - mqttStateTime < mqttReconnectBackoff) return;
-
-          if (config.mqttHost.length() == 0) {
-            mqttStateTime = now;
-            mqttReconnectBackoff = MQTT_MAX_BACKOFF;
-            Serial.println("[MQTT] No host configured, waiting...");
-            return;
-          }
-
-          pendingClientId = config.mqttClientId.length() > 0
-                              ? config.mqttClientId
-                              : getDeviceId();
-
-          if (config.mqttSsl) {
-            sslClient.setInsecure();
-            mqttClient.setClient(sslClient);
-          } else {
-            mqttClient.setClient(wifiClient);
-          }
-          mqttClient.setCallback(mqttCallback);
-          mqttClient.setBufferSize(4096);
-          sslPreConnected = false;
 
 
-          Serial.printf("[MQTT] Resolving %s ...\n", config.mqttHost.c_str());
-          mqttState = MQTT_RESOLVING;
-          mqttStateTime = now;
-          break;
-        }
-
-      case MQTT_RESOLVING:
-        {
-          if (now - mqttStateTime > 5000) {
-            Serial.println("[MQTT] DNS timeout");
-            mqttState = MQTT_IDLE;
-            mqttStateTime = now;
-            mqttReconnectBackoff = min(mqttReconnectBackoff * 2, MQTT_MAX_BACKOFF);
-            Serial.printf("[MQTT] Backoff: %lu ms\n", mqttReconnectBackoff);
-            return;
-          }
-
-          int ret = WiFi.hostByName(config.mqttHost.c_str(), resolvedIP);
-
-          if (ret == 0 || (resolvedIP[0] == 0 && resolvedIP[1] == 0 && resolvedIP[2] == 0 && resolvedIP[3] == 0)) {
-            Serial.println("[MQTT] DNS failed");
-            mqttState = MQTT_IDLE;
-            mqttStateTime = now;
-            mqttReconnectBackoff = min(mqttReconnectBackoff * 2, MQTT_MAX_BACKOFF);
-            Serial.printf("[MQTT] Backoff: %lu ms\n", mqttReconnectBackoff);
-            return;
-          }
-
-          Serial.printf("[MQTT] Resolved to %s\n", resolvedIP.toString().c_str());
-
-          mqttClient.setServer(resolvedIP, config.mqttPort);
-          mqttState = MQTT_CONNECTING;
-          mqttStateTime = now;
-          break;
-        }
-
-      case MQTT_CONNECTING:
-        {
-          if (now - mqttStateTime > 10000) {
-            Serial.println("[MQTT] Connect timeout");
-            int rc = mqttClient.state();
-            Serial.printf("[MQTT] rc=%d (%s)\n", rc, mqttErrorString(rc));
-            mqttClient.disconnect();
-            sslPreConnected = false;
-            mqttState = MQTT_IDLE;
-            mqttStateTime = now;
-            mqttReconnectBackoff = min(mqttReconnectBackoff * 2, MQTT_MAX_BACKOFF);
-            Serial.printf("[MQTT] Backoff: %lu ms\n", mqttReconnectBackoff);
-            return;
-          }
-
-          // SSL: 先用域名建立连接（带 SNI），再让 PubSubClient 走 MQTT
-          if (config.mqttSsl && !sslPreConnected) {
-            Serial.printf("[MQTT-SSL] Connecting to %s:%u ...\n",
-                          config.mqttHost.c_str(), config.mqttPort);
-            sslClient.stop();
-            delay(50);
-            sslClient.setInsecure();
-            if (!sslClient.connect(config.mqttHost.c_str(), config.mqttPort, 10000)) {
-              Serial.println("[MQTT-SSL] SSL connect failed");
-              mqttClient.disconnect();
-              sslPreConnected = false;
-              mqttState = MQTT_IDLE;
-              mqttStateTime = now;
-              mqttReconnectBackoff = min(mqttReconnectBackoff * 2, MQTT_MAX_BACKOFF);
-              Serial.printf("[MQTT] Backoff: %lu ms\n", mqttReconnectBackoff);
-              return;
-            }
-            Serial.println("[MQTT-SSL] SSL connected OK");
-            sslPreConnected = true;
-          }
-
-          // PubSubClient 检测到 socket 已连接，直接发 MQTT CONNECT
-          Serial.printf("[MQTT] %s %s:%u (ClientID=%s)\n",
-                        config.mqttSsl ? "SSL" : "TCP",
-                        config.mqttHost.c_str(),
-                        config.mqttPort,
-                        pendingClientId.c_str());
-          Serial.printf("[MQTT] Free heap: %u bytes\n", ESP.getFreeHeap());
-
-          bool ok = false;
-          if (config.mqttUser.length() > 0) {
-            Serial.printf("[MQTT] Auth: user=%s\n", config.mqttUser.c_str());
-            ok = mqttClient.connect(
-              pendingClientId.c_str(),
-              config.mqttUser.c_str(),
-              config.mqttPass.c_str(),
-              LWT_TOPIC,   // 遗嘱主题
-              1,           // QoS
-              true,        // retain
-              LWT_OFFLINE  // 遗嘱消息
-            );
-
-          } else {
-            Serial.println("[MQTT] Auth: none");
-            ok = mqttClient.connect(
-              pendingClientId.c_str(),
-              NULL, NULL,
-              LWT_TOPIC,   // 遗嘱主题
-              1,           // QoS
-              true,        // retain
-              LWT_OFFLINE  // 遗嘱消息
-            );
-          }
-
-          if (ok) {
-            Serial.println("[MQTT] Connected!");
-            connected = true;
-            mqttState = MQTT_LINKED;
-            mqttReconnectBackoff = 2000;
-
-            for (auto &t : config.subTopics) {
-              mqttClient.subscribe(t.topic.c_str(), t.qos);
-              Serial.printf("[MQTT] Sub: %s QoS%d\n", t.topic.c_str(), t.qos);
-            }
-            mqttClient.subscribe(MQTT_OTA_TOPIC, 1);
-            Serial.printf("[MQTT] Sub: %s QoS1 (Reserved OTA)\n", MQTT_OTA_TOPIC);
-
-            lastBatchReport = millis();
-          } else {
-            int rc = mqttClient.state();
-            Serial.printf("[MQTT] Connect failed rc=%d (%s)\n", rc, mqttErrorString(rc));
-            Serial.printf("[MQTT] Free heap: %u bytes\n", ESP.getFreeHeap());
-            Serial.printf("[MQTT] WiFi RSSI: %d dBm\n", WiFi.RSSI());
-
-            mqttClient.disconnect();
-            sslPreConnected = false;
-            mqttState = MQTT_IDLE;
-            mqttStateTime = now;
-            mqttReconnectBackoff = min(mqttReconnectBackoff * 2, MQTT_MAX_BACKOFF);
-            Serial.printf("[MQTT] Backoff: %lu ms\n", mqttReconnectBackoff);
-          }
-          break;
-        }
-
-
-      default:
-        mqttState = MQTT_IDLE;
+        Serial.printf("[MQTT] Resolving %s ...\n", config.mqttHost.c_str());
+        mqttState = MQTT_RESOLVING;
         mqttStateTime = now;
         break;
-    }
+      }
+
+    case MQTT_RESOLVING:
+      {
+        if (now - mqttStateTime > 5000) {
+          Serial.println("[MQTT] DNS timeout");
+          mqttState = MQTT_IDLE;
+          mqttStateTime = now;
+          mqttReconnectBackoff = min(mqttReconnectBackoff * 2, MQTT_MAX_BACKOFF);
+          Serial.printf("[MQTT] Backoff: %lu ms\n", mqttReconnectBackoff);
+          return;
+        }
+
+        int ret = WiFi.hostByName(config.mqttHost.c_str(), resolvedIP);
+
+        if (ret == 0 || (resolvedIP[0] == 0 && resolvedIP[1] == 0 && resolvedIP[2] == 0 && resolvedIP[3] == 0)) {
+          Serial.println("[MQTT] DNS failed");
+          mqttState = MQTT_IDLE;
+          mqttStateTime = now;
+          mqttReconnectBackoff = min(mqttReconnectBackoff * 2, MQTT_MAX_BACKOFF);
+          Serial.printf("[MQTT] Backoff: %lu ms\n", mqttReconnectBackoff);
+          return;
+        }
+
+        Serial.printf("[MQTT] Resolved to %s\n", resolvedIP.toString().c_str());
+
+        mqttClient.setServer(resolvedIP, config.mqttPort);
+        mqttState = MQTT_CONNECTING;
+        mqttStateTime = now;
+        break;
+      }
+
+    case MQTT_CONNECTING:
+      {
+        if (now - mqttStateTime > 10000) {
+          Serial.println("[MQTT] Connect timeout");
+          int rc = mqttClient.state();
+          Serial.printf("[MQTT] rc=%d (%s)\n", rc, mqttErrorString(rc));
+          mqttClient.disconnect();
+          sslPreConnected = false;
+          mqttState = MQTT_IDLE;
+          mqttStateTime = now;
+          mqttReconnectBackoff = min(mqttReconnectBackoff * 2, MQTT_MAX_BACKOFF);
+          Serial.printf("[MQTT] Backoff: %lu ms\n", mqttReconnectBackoff);
+          return;
+        }
+
+        // SSL: 先用域名建立连接（带 SNI），再让 PubSubClient 走 MQTT
+        if (config.mqttSsl && !sslPreConnected) {
+          Serial.printf("[MQTT-SSL] Connecting to %s:%u ...\n",
+                        config.mqttHost.c_str(), config.mqttPort);
+          sslClient.stop();
+          delay(50);
+          sslClient.setInsecure();
+          if (!sslClient.connect(config.mqttHost.c_str(), config.mqttPort, 10000)) {
+            Serial.println("[MQTT-SSL] SSL connect failed");
+            mqttClient.disconnect();
+            sslPreConnected = false;
+            mqttState = MQTT_IDLE;
+            mqttStateTime = now;
+            mqttReconnectBackoff = min(mqttReconnectBackoff * 2, MQTT_MAX_BACKOFF);
+            Serial.printf("[MQTT] Backoff: %lu ms\n", mqttReconnectBackoff);
+            return;
+          }
+          Serial.println("[MQTT-SSL] SSL connected OK");
+          sslPreConnected = true;
+        }
+
+        // PubSubClient 检测到 socket 已连接，直接发 MQTT CONNECT
+        Serial.printf("[MQTT] %s %s:%u (ClientID=%s)\n",
+                      config.mqttSsl ? "SSL" : "TCP",
+                      config.mqttHost.c_str(),
+                      config.mqttPort,
+                      pendingClientId.c_str());
+        Serial.printf("[MQTT] Free heap: %u bytes\n", ESP.getFreeHeap());
+
+        bool ok = false;
+        if (config.mqttUser.length() > 0) {
+          Serial.printf("[MQTT] Auth: user=%s\n", config.mqttUser.c_str());
+          ok = mqttClient.connect(
+            pendingClientId.c_str(),
+            config.mqttUser.c_str(),
+            config.mqttPass.c_str(),
+            LWT_TOPIC,   // 遗嘱主题
+            1,           // QoS
+            true,        // retain
+            LWT_OFFLINE  // 遗嘱消息
+          );
+
+        } else {
+          Serial.println("[MQTT] Auth: none");
+          ok = mqttClient.connect(
+            pendingClientId.c_str(),
+            NULL, NULL,
+            LWT_TOPIC,   // 遗嘱主题
+            1,           // QoS
+            true,        // retain
+            LWT_OFFLINE  // 遗嘱消息
+          );
+        }
+
+        if (ok) {
+          Serial.println("[MQTT] Connected!");
+          connected = true;
+          mqttState = MQTT_LINKED;
+          mqttReconnectBackoff = 2000;
+
+          for (auto &t : config.subTopics) {
+            mqttClient.subscribe(t.topic.c_str(), t.qos);
+            Serial.printf("[MQTT] Sub: %s QoS%d\n", t.topic.c_str(), t.qos);
+          }
+          mqttClient.subscribe(MQTT_OTA_TOPIC, 1);
+          Serial.printf("[MQTT] Sub: %s QoS1 (Reserved OTA)\n", MQTT_OTA_TOPIC);
+
+          lastBatchReport = millis();
+        } else {
+          int rc = mqttClient.state();
+          Serial.printf("[MQTT] Connect failed rc=%d (%s)\n", rc, mqttErrorString(rc));
+          Serial.printf("[MQTT] Free heap: %u bytes\n", ESP.getFreeHeap());
+          Serial.printf("[MQTT] WiFi RSSI: %d dBm\n", WiFi.RSSI());
+
+          mqttClient.disconnect();
+          sslPreConnected = false;
+          mqttState = MQTT_IDLE;
+          mqttStateTime = now;
+          mqttReconnectBackoff = min(mqttReconnectBackoff * 2, MQTT_MAX_BACKOFF);
+          Serial.printf("[MQTT] Backoff: %lu ms\n", mqttReconnectBackoff);
+        }
+        break;
+      }
+
+
+    default:
+      mqttState = MQTT_IDLE;
+      mqttStateTime = now;
+      break;
   }
+}
 
 
-  bool isConnected() {
-    return mqttClient.connected();
+bool isConnected() {
+  return mqttClient.connected();
+}
+
+void disconnect() {
+  if (mqttClient.connected()) {
+    mqttClient.disconnect();
   }
+  connected = false;
+  mqttState = MQTT_IDLE;
+  mqttStateTime = millis();
+  mqttReconnectBackoff = 2000;
+  Serial.println("[MQTT] Disconnected");
+}
 
-  void disconnect() {
-    if (mqttClient.connected()) {
-      mqttClient.disconnect();
-    }
-    connected = false;
-    mqttState = MQTT_IDLE;
-    mqttStateTime = millis();
-    mqttReconnectBackoff = 2000;
-    Serial.println("[MQTT] Disconnected");
+void publish(const char *topic, const char *payload) {
+  if (mqttClient.connected()) {
+    mqttClient.publish(topic, payload);
   }
-
-  void publish(const char *topic, const char *payload) {
-    if (mqttClient.connected()) {
-      mqttClient.publish(topic, payload);
-    }
-    if (_wsClient != 0xFF && _wsSend && config.pubTopics.size() > 0
-        && String(topic) == config.pubTopics[0].topic) {
-      _wsSend(_wsClient, payload);
-    }
+  if (_wsClient != 0xFF && _wsSend && config.pubTopics.size() > 0
+      && String(topic) == config.pubTopics[0].topic) {
+    _wsSend(_wsClient, payload);
   }
+}
 
-  void publish(const char *topic, const uint8_t *payload, unsigned int length) {
-    if (mqttClient.connected()) {
-      mqttClient.publish(topic, payload, length);
-    }
+void publish(const char *topic, const uint8_t *payload, unsigned int length) {
+  if (mqttClient.connected()) {
+    mqttClient.publish(topic, payload, length);
   }
+}
 
-  bool publish(const String &topic, const String &payload, uint8_t qos) {
-    if (mqttClient.connected()) {
-      mqttClient.publish(topic.c_str(), payload.c_str());
-    }
-    if (_wsClient != 0xFF && _wsSend && config.pubTopics.size() > 0
-        && topic == config.pubTopics[0].topic) {
-      _wsSend(_wsClient, payload.c_str());
-    }
-    return mqttClient.connected();
+bool publish(const String &topic, const String &payload, uint8_t qos) {
+  if (mqttClient.connected()) {
+    mqttClient.publish(topic.c_str(), payload.c_str());
   }
+  if (_wsClient != 0xFF && _wsSend && config.pubTopics.size() > 0
+      && topic == config.pubTopics[0].topic) {
+    _wsSend(_wsClient, payload.c_str());
+  }
+  return mqttClient.connected();
+}
 
 
-  }  // namespace MqttClient
+}  // namespace MqttClient

@@ -224,29 +224,52 @@ var CATEGORIES = [
   { id:"preset",   icon:"\u2B50", zh:"\u9884\u8BBE",     en:"Presets" }
 ];
 
+// ★ GPIO 二级分组
+var GPIO_SUB_GROUPS = {
+  "basic":   { zh:"基础IO",   en:"Basic IO" },
+  "rgb":     { zh:"RGB灯",    en:"RGB LED" },
+  "servo":   { zh:"舵机",     en:"Servo" },
+  "audio":   { zh:"音频",     en:"Audio" },
+  "pulse":   { zh:"脉冲测量", en:"Pulse" },
+  "encoder": { zh:"编码器",   en:"Encoder" },
+  "system":  { zh:"系统",     en:"System" }
+};
+
+
 /* ============================================================
    BLOCK DEFINITIONS (完整版 - 原始所有块 + 新增模块 + raw_cmd，已删除 RGB)
    ============================================================ */
 var BLOCK_DEFS = {
   /* GPIO (原版保留, 删除 rgb, 新增 read_gpio / blink) */
-  "set":          { cat:"gpio", zh:"\u8BBE\u7F6E GPIO",   en:"Digital SET",  cmd:"set",
-    fields:[["pin","\u5F15\u811A","Pin","pin"],["value","\u503C","Value","select",[["0","LOW (0)"],["1","HIGH (1)"]]]] },
-  "toggle":       { cat:"gpio", zh:"\u5207\u6362 GPIO",   en:"Toggle",       cmd:"toggle",
-    fields:[["pin","\u5F15\u811A","Pin","pin"]] },
-  "pwm":          { cat:"gpio", zh:"PWM \u8F93\u51FA",    en:"PWM",          cmd:"pwm",
-    fields:[["pin","\u5F15\u811A","Pin","pin"],["value","\u5360\u7A7A\u6BD4 0-255","Value","number",null,128],["freq","\u9891\u7387Hz","Freq","number",null,5000,1,40000]] },
-  "mode":         { cat:"gpio", zh:"\u8BBE\u7F6E\u6A21\u5F0F",   en:"Set Mode",     cmd:"mode",
-    fields:[["pin","\u5F15\u811A","Pin","pin"],["mode","\u6A21\u5F0F","Mode","select",[["output","OUTPUT"],["input","INPUT"],["input_pullup","INPUT_PULLUP"]]]] },
-  "read_gpio":    { cat:"gpio", zh:"\u8BFB\u53D6 GPIO",   en:"Read GPIO",    cmd:"get",
-    fields:[["pin","\u5F15\u811A","Pin","pin"],["result_var","\u5B58\u5165\u53D8\u91CF","Var","text"]] },
-  "blink":        { cat:"gpio", zh:"\u95EA\u70C1 LED",    en:"Blink LED",    cmd:"blink",
-    fields:[["pin","\u5F15\u811A","Pin","pin"],["on_ms","\u4EAEms","ON ms","number",null,500,50,60000],["off_ms","\u706Dms","OFF ms","number",null,500,50,60000],["count","\u6B21\u6570(0=\u65E0\u9650)","Count","number",null,0,0,10000]] },
-  "servo":        { cat:"gpio", zh:"\u8235\u673A",       en:"Servo",        cmd:"servo",
-    fields:[["pin","\u5F15\u811A","Pin","pin"],["angle","\u89D2\u5EA6 0-180","Angle","number",null,90]] },
-  "servo_detach": { cat:"gpio", zh:"\u91CA\u653E\u8235\u673A",   en:"Detach Servo", cmd:"servo_detach",
-    fields:[["pin","\u5F15\u811A","Pin","pin"]] },
-  "clear":        { cat:"gpio", zh:"\u6E05\u9664\u6240\u6709 GPIO", en:"Clear All GPIO", cmd:"clear" },
-  "status":       { cat:"gpio", zh:"GPIO \u72B6\u6001",  en:"GPIO Status",  cmd:"status" },
+  "set":          { cat:"gpio", sub:"basic", zh:"数字输出",   en:"Digital SET",  cmd:"set",
+    fields:[["pin","引脚","Pin","pin"],["value","电平","Value","select",[["0","LOW (0)"],["1","HIGH (1)"]]]] },
+  "toggle":       { cat:"gpio", sub:"basic", zh:"翻转电平",   en:"Toggle",       cmd:"toggle",
+    fields:[["pin","引脚","Pin","pin"]] },
+  "pwm":          { cat:"gpio", sub:"basic", zh:"PWM输出",    en:"PWM",          cmd:"pwm",
+    fields:[["pin","引脚","Pin","pin"],["value","占空比 0-255","Value","number",null,128]] },
+  "mode":         { cat:"gpio", sub:"basic", zh:"设置模式",   en:"Set Mode",     cmd:"mode",
+    fields:[["pin","引脚","Pin","pin"],["mode","模式","Mode","select",[["output","OUTPUT"],["input","INPUT"],["input_pullup","INPUT_PULLUP"]]]] },
+  "rgb":          { cat:"gpio", sub:"rgb",   zh:"RGB灯",      en:"RGB",          cmd:"rgb",
+    fields:[["rPin","R引脚","R Pin","pin"],["gPin","G引脚","G Pin","pin"],["bPin","B引脚","B Pin","pin"],["r","R 0-255","R","number",null,255],["g","G 0-255","G","number",null,0],["b","B 0-255","B","number",null,0]] },
+  "servo":        { cat:"gpio", sub:"servo", zh:"舵机角度",   en:"Servo",        cmd:"servo",
+    fields:[["pin","引脚","Pin","pin"],["angle","角度 0-180","Angle","number",null,90]] },
+  "servo_detach": { cat:"gpio", sub:"servo", zh:"释放舵机",   en:"Detach",       cmd:"servo_detach",
+    fields:[["pin","引脚","Pin","pin"]] },
+  "tone":         { cat:"gpio", sub:"audio", zh:"音频输出",   en:"Tone",         cmd:"tone",
+    fields:[["pin","引脚","Pin","pin"],["freq","频率Hz(0=停)","Freq","number",null,1000]] },
+  "pulse_in":     { cat:"gpio", sub:"pulse", zh:"脉冲测量",   en:"Pulse In",     cmd:"pulse_in",
+    fields:[["pin","输入引脚","Pin","pin"],["trig","触发引脚(-1=无)","Trig","number",null,-1],["state","检测电平","State","select",[["high","HIGH"],["low","LOW"]]],["samples","采样次数","Samples","number",null,1],["timeout","超时μs","Timeout","number",null,30000]] },
+  "enc_add":      { cat:"gpio", sub:"encoder", zh:"添加编码器", en:"Add Encoder", cmd:"encoder", action:"add",
+    fields:[["id","ID","ID","text"],["clk","CLK引脚","CLK","pin"],["dt","DT引脚","DT","pin"],["label","标签","Label","text"]] },
+  "enc_read":     { cat:"gpio", sub:"encoder", zh:"读取编码器", en:"Read Encoder", cmd:"encoder", action:"read",
+    fields:[["id","ID","ID","text"]] },
+  "enc_reset":    { cat:"gpio", sub:"encoder", zh:"重置编码器", en:"Reset Encoder", cmd:"encoder", action:"reset",
+    fields:[["id","ID","ID","text"]] },
+  "enc_remove":   { cat:"gpio", sub:"encoder", zh:"移除编码器", en:"Remove Encoder", cmd:"encoder", action:"remove",
+    fields:[["id","ID","ID","text"]] },
+  "clear":        { cat:"gpio", sub:"system", zh:"清除所有引脚", en:"Clear All",    cmd:"clear" },
+  "status":       { cat:"gpio", sub:"system", zh:"查询引脚状态", en:"Status",       cmd:"status" },
+
 
   /* Sensor (完整原始体系) */
   "sensor_add":    { cat:"sensor", zh:"\u6DFB\u52A0\u4F20\u611F\u5668", en:"Add Sensor",   cmd:"sensor", action:"add",
@@ -696,6 +719,7 @@ function renderPalette() {
   var listEl = document.getElementById("paletteList");
   if (!tabsEl || !listEl) return;
 
+  // Category tabs
   var tabsHtml = "";
   for (var i = 0; i < CATEGORIES.length; i++) {
     var cat = CATEGORIES[i];
@@ -707,24 +731,7 @@ function renderPalette() {
   }
   tabsEl.innerHTML = tabsHtml;
 
-  /* 预设分类特殊处理 */
-  if (activeCategory === "preset") {
-    var html = '<div class="preset-save-bar" onclick="doSavePreset()">+ ' + translate('\u4FDD\u5B58\u5F53\u524D\u753B\u5E03\u4E3A\u9884\u8BBE','Save canvas as preset') + '</div>';
-    if (presets.length === 0) {
-      html += '<div class="slot-empty">' + translate('\u6682\u65E0\u9884\u8BBE','No presets') + '</div>';
-    } else {
-      html += '<div class="preset-section-title">' + translate('\u5DF2\u4FDD\u5B58\u7684\u9884\u8BBE','Saved Presets') + '</div>';
-      presets.forEach(function(p, i) {
-        html += '<div class="preset-item">';
-        html += '<span class="name" onclick="loadPreset(' + i + ')">' + escapeHtml(p.name) + '</span>';
-        html += '<button class="preset-del" onclick="event.stopPropagation();deletePreset(' + i + ')" title="' + translate('\u5220\u9664','Delete') + '">&#10005;</button>';
-        html += '</div>';
-      });
-    }
-    listEl.innerHTML = html;
-    return;
-  }
-
+  // Block list for active category (支持二级分组)
   var listHtml = "";
   var count = 0;
 
@@ -734,33 +741,66 @@ function renderPalette() {
       var def = CONDITION_DEFS[key];
       var label = language === "zh" ? def.zh : def.en;
       listHtml += '<div class="palette-item" onclick="addBlock(\'cond_' + key + '\')">';
-      listHtml += '<span class="icon">\u2753</span>';
+      listHtml += '<span class="icon">◆</span>';
       listHtml += '<span class="name">' + escapeHtml(label) + '</span>';
       listHtml += '</div>';
       count++;
     }
   } else {
+    // 收集当前分类的所有 block，按 sub 分组
+    var groups = {};
+    var groupOrder = [];
     for (var key in BLOCK_DEFS) {
       if (!BLOCK_DEFS.hasOwnProperty(key)) continue;
       var def = BLOCK_DEFS[key];
       if (def.cat !== activeCategory) continue;
-      var label = language === "zh" ? def.zh : def.en;
-      var icon = getCategoryIcon(def.cat);
-      listHtml += '<div class="palette-item" onclick="addBlock(\'' + key + '\')">';
-      listHtml += '<span class="icon">' + icon + '</span>';
-      listHtml += '<span class="name">' + escapeHtml(label) + '</span>';
-      listHtml += '</div>';
+      var subKey = def.sub || "_default";
+      if (!groups[subKey]) {
+        groups[subKey] = [];
+        groupOrder.push(subKey);
+      }
+      groups[subKey].push({ key: key, def: def });
       count++;
     }
-  }
 
-  if (count === 0) {
-    listHtml = '<div style="padding:12px;text-align:center;color:var(--muted);font-size:11px">' + translate('\u6B64\u5206\u7C7B\u6682\u65E0\u79EF\u6728\u5757','No blocks in this category') + '</div>';
+    if (count === 0) {
+      listHtml = '<div style="padding:12px;text-align:center;color:var(--muted);font-size:11px">';
+      listHtml += translate('此分类暂无模块','No blocks in this category') + '</div>';
+    } else {
+      var hasSubGroups = (groupOrder.length > 1 || groupOrder[0] !== "_default");
+      for (var gi = 0; gi < groupOrder.length; gi++) {
+        var subKey = groupOrder[gi];
+        var items = groups[subKey];
+
+        // 有子分组且不是默认分组 → 显示子分组标题
+        if (hasSubGroups && subKey !== "_default") {
+          var subDef = null;
+          if (typeof GPIO_SUB_GROUPS !== 'undefined' && GPIO_SUB_GROUPS[subKey]) {
+            subDef = GPIO_SUB_GROUPS[subKey];
+          }
+          var subLabel = subDef ? (language === "zh" ? subDef.zh : subDef.en) : subKey;
+          listHtml += '<div style="font-size:9px;color:var(--cyan);font-weight:600;padding:8px 8px 3px;letter-spacing:.5px;text-transform:uppercase;opacity:.7">';
+          listHtml += subLabel + '</div>';
+        }
+
+        for (var bi = 0; bi < items.length; bi++) {
+          var bDef = items[bi].def;
+          var bKey = items[bi].key;
+          var label = language === "zh" ? bDef.zh : bDef.en;
+          var icon = getCategoryIcon(bDef.cat);
+          listHtml += '<div class="palette-item" onclick="addBlock(\'' + bKey + '\')">';
+          listHtml += '<span class="icon">' + icon + '</span>';
+          listHtml += '<span class="name">' + escapeHtml(label) + '</span>';
+          listHtml += '</div>';
+        }
+      }
+    }
   }
 
   listEl.innerHTML = listHtml;
   listEl.scrollTop = 0;
 }
+
 
 function selectCategory(categoryId) {
   activeCategory = categoryId;

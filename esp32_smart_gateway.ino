@@ -16,10 +16,12 @@
 #include <esp_task_wdt.h>
 #include "data_engine.h"
 #include "dual_channel.h"
+#include "encoder_engine.h"
 
 
 
-const char *OTA_VERIFY_TAG = "缺失修复";
+
+const char *OTA_VERIFY_TAG = "修复舵机释放bug，添加变频，脉冲测量，双引脚测量";
 
 
 WebServer server(80);
@@ -92,7 +94,7 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n==============================");
-  Serial.printf(" ESP32-S3 Smart Gateway 1.3.0 by %s\n", OTA_VERIFY_TAG);
+  Serial.printf(" ESP32-S3 Smart Gateway %s by %s\n",FIRMWARE_VERSION,OTA_VERIFY_TAG);
   Serial.printf(" Device ID: %s\n", getDeviceId().c_str());
   Serial.printf(" Firmware: v%s\n", FIRMWARE_VERSION);
   Serial.println("==============================\n");
@@ -144,6 +146,7 @@ void setup() {
   UART::init();
   SPIBus::init();
   Touch::init();
+  Encoder::init(); 
 
   WifiManager::init();
   WebServerManager::init();
@@ -209,6 +212,7 @@ void loop() {
   UART::loop();
   SPIBus::loop();
   Touch::loop();
+   Encoder::loop(); 
   RTC::loop();
   DataEngine::loop();
   DualChannel::loop(); 

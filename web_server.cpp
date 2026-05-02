@@ -213,6 +213,30 @@ static void handleDeletePresets() {
     Serial.printf("[PRESET] Deleted '%s' (idx=%d)\n", name.c_str(), foundIdx);
 }
 
+static void handlePostCommand() {
+  if (!server.hasArg("plain")) {
+    server.send(400, "application/json", "{\"ok\":false,\"error\":\"no body\"}");
+    return;
+  }
+
+  String body = server.arg("plain");
+  Serial.printf("[HTTP-CMD] Received (%d bytes)\n", body.length());
+
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, body);
+  if (err) {
+    Serial.printf("[HTTP-CMD] JSON error: %s\n", err.c_str());
+    server.send(400, "application/json", "{\"ok\":false,\"error\":\"invalid json\"}");
+    return;
+  }
+
+  extern void executeCommand(JsonDocument &doc);
+  executeCommand(doc);
+
+  server.send(200, "application/json", "{\"ok\":true}");
+  Serial.println("[HTTP-CMD] Executed");
+}
+
 
 
 static void handlePostConfig() {
@@ -360,6 +384,8 @@ static void handleGetInfo() {
   doc["mqttStatus"] = MqttClient::isConnected() ? "Connected" : "Disconnected";
   doc["heapFree"] = ESP.getFreeHeap();
   doc["firmware"] = FIRMWARE_VERSION;
+  doc["mac"] = WiFi.macAddress();
+   doc["deviceName"] = config.deviceName; 
   String json;
   serializeJson(doc, json);
   server.send(200, "application/json", json);
@@ -466,6 +492,7 @@ static void handleGetBatchStatus() {
   JsonDocument doc;
   doc["type"] = "batch_status";
   doc["deviceId"] = getDeviceId();
+   doc["mac"] = WiFi.macAddress();//设备芯片序列号
   doc["timestamp"] = millis();
   doc["heapFree"] = ESP.getFreeHeap();
   doc["uptime"] = millis() / 1000;
@@ -728,6 +755,7 @@ static void wsOtaEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t leng
 server.on("/api/presets", HTTP_GET, handleGetPresets);
 server.on("/api/preset", HTTP_POST, handlePostPresets);
 server.on("/api/preset", HTTP_DELETE, handleDeletePresets);
+server.on("/api/command", HTTP_POST, handlePostCommand);
 
    
 

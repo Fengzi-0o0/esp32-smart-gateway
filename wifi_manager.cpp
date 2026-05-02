@@ -151,6 +151,7 @@ void handleUdpDiscovery() {
     resp["heap"]          = ESP.getFreeHeap();
     resp["uptime"]        = millis() / 1000;
     resp["batchInterval"] = config.batchInterval;
+    resp["mac"]           = WiFi.macAddress();
 
     String response;
     serializeJson(resp, response);

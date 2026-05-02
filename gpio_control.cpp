@@ -104,4 +104,61 @@ void publishStatus() {
   Serial.println("[GPIO] Status published");
 }
 
+// ═══════════════════════════════════════════════════════════
+// ★ 新增：脉冲测量
+// ═══════════════════════════════════════════════════════════
+long measurePulse(int pin, int trigPin, int level, int timeout, int samples) {
+    pinMode(pin, INPUT);
+    if (trigPin >= 0) {
+        pinMode(trigPin, OUTPUT);
+    }
+
+    long readings[20];
+    int validCount = 0;
+
+    for (int s = 0; s < samples; s++) {
+        if (trigPin >= 0) {
+            digitalWrite(trigPin, LOW);
+            delayMicroseconds(2);
+            digitalWrite(trigPin, HIGH);
+            delayMicroseconds(10);
+            digitalWrite(trigPin, LOW);
+        }
+
+        long duration = pulseIn(pin, level, timeout);
+        if (duration > 0) {
+            readings[validCount++] = duration;
+        }
+        if (s < samples - 1) delay(20);
+    }
+
+    long medianDuration = 0;
+    if (validCount > 0) {
+        for (int i = 0; i < validCount - 1; i++)
+            for (int j = i + 1; j < validCount; j++)
+                if (readings[j] < readings[i]) {
+                    long tmp = readings[i];
+                    readings[i] = readings[j];
+                    readings[j] = tmp;
+                }
+        medianDuration = readings[validCount / 2];
+    }
+
+    return medianDuration;
+}
+
+// ═══════════════════════════════════════════════════════════
+// ★ 新增：音频输出（方波频率）
+// ═══════════════════════════════════════════════════════════
+void toneSet(int pin, unsigned int freq) {
+    if (freq == 0) {
+        ledcDetach(pin);
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, LOW);
+    } else {
+        ledcAttach(pin, freq, 8);
+        ledcWriteTone(pin, freq);
+    }
+}
+
 }  // namespace GpioControl
