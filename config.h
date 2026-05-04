@@ -20,7 +20,7 @@
 #define MAX_UART_PORTS      2
 #define MAX_SPI_PORTS       2
 #define MAX_TOUCH_PINS      10
-#define FIRMWARE_VERSION    "1.0.1fix9"  // 版本号更新
+#define FIRMWARE_VERSION    "1.0.1fix21"  // 版本号更新
 #define UDP_DISCOVERY_PORT  4210
 #define OTA_CHUNK_SIZE      1024
 
@@ -128,7 +128,18 @@ struct TouchEntry {
     bool   persistent;
 };
 
-
+// ========== 新增：显示屏配置 ==========
+struct DisplayConfig {
+    int  sdaPin;
+    int  sclPin;
+    int  address;
+    int  width;
+    int  height;
+    bool flip;
+    int  contrast;
+    int  minFlushMs;
+    bool enabled;
+};
 
 struct DeviceConfig {
     String staSsid;
@@ -153,6 +164,7 @@ struct DeviceConfig {
     std::vector<UartEntry>     uartConfigs;
     std::vector<SpiEntry>      spiConfigs;
     std::vector<TouchEntry>    touchPins;
+    DisplayConfig display;  // ← 新增
 
 
     int    batchInterval;  // 新增: 批量上报间隔秒, 0=禁用

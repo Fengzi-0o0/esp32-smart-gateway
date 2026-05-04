@@ -3,6 +3,7 @@
 #include "mqtt_client.h"
 #include <Wire.h>
 #include "script_engine.h"
+#include "display_engine.h"  
 
 
 static bool wireInitialized = false;
@@ -10,16 +11,25 @@ static int  currentSda = -1;
 static int  currentScl = -1;
 
 static bool ensureWire(int sda, int scl) {
+    // ========== 新增：引脚冲突检查 ==========
+    if (DisplayEngine::displaySda >= 0 &&
+        (sda != DisplayEngine::displaySda || scl != DisplayEngine::displayScl)) {
+        Serial.printf("[I2C] REJECTED: sda=%d scl=%d conflicts with display (sda=%d scl=%d)\n",
+                      sda, scl, DisplayEngine::displaySda, DisplayEngine::displayScl);
+        return false;
+    }
+
     if (wireInitialized && currentSda == sda && currentScl == scl) return true;
     if (wireInitialized) Wire.end();
     Wire.begin(sda, scl);
-    Wire.setClock(100000);
+    Wire.setClock(400000);  // ← 从 100kHz 改为 400kHz，与显示引擎一致
     currentSda = sda;
     currentScl = scl;
     wireInitialized = true;
-    Serial.printf("[I2C] Init SDA=%d SCL=%d\n", sda, scl);
+    Serial.printf("[I2C] Init SDA=%d SCL=%d @400kHz\n", sda, scl);
     return true;
 }
+
 
 static void publishI2CResult(const String &type, int sda, int scl,
                               uint8_t addr, uint8_t reg,
@@ -68,6 +78,9 @@ void handleCommand(JsonDocument &doc) {
     String action = doc["action"].as<String>();
     int sda = doc["sda"] | -1;
     int scl = doc["scl"] | -1;
+
+     if (sda < 0 && DisplayEngine::displaySda >= 0) sda = DisplayEngine::displaySda;
+    if (scl < 0 && DisplayEngine::displayScl >= 0) scl = DisplayEngine::displayScl;
 
     if (action == "scan") {
         if (sda < 0 || scl < 0) {

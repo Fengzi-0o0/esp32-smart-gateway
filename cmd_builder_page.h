@@ -12,7 +12,7 @@ const char CMD_BUILDER_PAGE[] PROGMEM = R"rawliteral(
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#080c18;--surface:#0d1321;--card:#111827;--border:#1a2540;--text:#e2e8f0;--muted:#5a6a8a;--cyan:#00d4ff;--green:#10b981;--amber:#f59e0b;--red:#ef4444;--purple:#a78bfa}
 body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
-.app{display:flex;flex-direction:column;height:100%}
+.app{display:flex;flex-direction:column;height:100%;overflow:hidden}
 .header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;gap:6px}
 .header h1{font-size:14px;font-weight:700}
 .header-right{display:flex;gap:6px;align-items:center}
@@ -32,7 +32,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
 .setting-check label{font-size:10px;cursor:pointer}
 .setting-group input[type=number]{width:70px;padding:5px 8px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:10px;font-family:'JetBrains Mono',monospace;outline:none}
 .setting-group input[type=number]:focus{border-color:var(--cyan)}
-.workspace{display:flex;flex:1;overflow:hidden}
+.workspace{display:flex;flex:1;overflow:hidden;min-height:0}
 .palette{width:210px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
 .palette-tabs{display:flex;flex-wrap:wrap;gap:3px;padding:8px;border-bottom:1px solid var(--border);max-height:120px;overflow-y:auto}
 .palette-tab{padding:3px 7px;border-radius:4px;font-size:9px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--card);color:var(--muted);transition:.15s;white-space:nowrap}
@@ -43,9 +43,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
 .palette-item:hover{border-color:var(--cyan);background:rgba(0,212,255,.04)}
 .palette-item .icon{font-size:12px;flex-shrink:0}
 .palette-item .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.canvas{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px}
+.canvas{flex:1;overflow-y:auto;min-height:0;padding:12px;display:flex;flex-direction:column;gap:8px}
 .canvas-empty{display:flex;align-items:center;justify-content:center;flex:1;color:var(--muted);font-size:12px;text-align:center;padding:30px}
-.block{border-radius:8px;border:1px solid var(--border);border-left:3px solid var(--border);transition:.15s;overflow:hidden}
+.block{border-radius:8px;border:1px solid var(--border);border-left:3px solid var(--border);transition:.15s;overflow:hidden;flex-shrink:0}
 .block.selected{border-color:var(--cyan);box-shadow:0 0 10px rgba(0,212,255,.1)}
 .block-header{display:flex;align-items:center;gap:6px;padding:7px 10px;cursor:pointer;user-select:none}
 .block-header .icon{font-size:13px;flex-shrink:0}
@@ -125,6 +125,10 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
 .toast-ok{background:rgba(16,185,129,.15);border:1px solid var(--green);color:var(--green)}
 .toast-err{background:rgba(239,68,68,.15);border:1px solid var(--red);color:var(--red)}
 .toast-info{background:rgba(0,212,255,.12);border:1px solid var(--cyan);color:var(--cyan)}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--muted)}
 @media(max-width:700px){
   .workspace{flex-direction:column}
   .palette{width:100%;max-height:150px;border-right:none;border-bottom:1px solid var(--border)}
@@ -158,13 +162,16 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
     <input type="checkbox" id="globalPersist" checked>
     <label for="globalPersist" id="labelPersist">Save NVS</label>
   </div>
-  <div class="setting-group">
+<div class="setting-group">
     <label id="labelMode">Mode:</label>
-    <select id="sendMode">
-      <option value="batch">Batch</option>
-      <option value="sequential">Sequential</option>
+    <select id="sendMode" onchange="onModeChange()">
+      <option value="batch" id="optBatch">Batch</option>
+      <option value="loop" id="optLoop">Loop</option>
+      <option value="step" id="optStep">Step</option>
+      <option value="sequential" id="optSeq">Sequential</option>
     </select>
   </div>
+
   <div class="setting-group">
     <label id="labelDelay">Delay(ms):</label>
     <input type="number" id="sendDelay" value="500" min="0" step="100">
@@ -221,6 +228,7 @@ var CATEGORIES = [
   { id:"random",   icon:"\uD83C\uDFB2", zh:"\u968F\u673A",     en:"Random" },
   { id:"system",   icon:"\u2699",  zh:"\u7CFB\u7EDF",     en:"System" },
   { id:"module",   icon:"\uD83D\uDCE6", zh:"\u6A21\u5757",     en:"Module" },
+   { id:"display",  icon:"🖥", zh:"显示屏",   en:"Display" },
   { id:"preset",   icon:"\u2B50", zh:"\u9884\u8BBE",     en:"Presets" }
 ];
 
@@ -461,8 +469,127 @@ var BLOCK_DEFS = {
     fields:[["pin","\u5F15\u811A","Pin","pin"],["enabled","\u542F\u7528","Enabled","checkbox",null,true]] },
   "mod_read":     { cat:"module", zh:"\u8BFB\u53D6\u6A21\u5757\u6570\u636E", en:"Read Module Data", cmd:"module", action:"read",
     fields:[["pin","\u5F15\u811A","Pin","pin"],["result_var","\u5B58\u5165\u53D8\u91CF","Result Var","text"]] },
-  "mod_list":     { cat:"module", zh:"\u5217\u51FA\u6240\u6709\u6A21\u5757", en:"List All Modules", cmd:"module", action:"list" }
+  "mod_list":     { cat:"module", zh:"\u5217\u51FA\u6240\u6709\u6A21\u5757", en:"List All Modules", cmd:"module", action:"list" },
+
+  // ========== Display 显示屏 ==========
+  "disp_init": { cat:"display", zh:"\u521D\u59CB\u5316\u663E\u793A\u5C4F", en:"Init Display",
+    cmd:"display", action:"init",
+    fields:[
+      ["sda","SDA\u5F15\u811A","SDA","pin"],
+      ["scl","SCL\u5F15\u811A","SCL","pin"],
+      ["address","I2C\u5730\u5740","Addr","number",null,60],
+      ["width","\u5BBD\u5EA6(\u50CF\u7D20)","Width","number",null,128],
+      ["height","\u9AD8\u5EA6(\u50CF\u7D20)","Height","number",null,64],
+      ["flip","\u7FFB\u8F6C","Flip","checkbox",null,false],
+      ["contrast","\u5BF9\u6BD4\u5EA6 0-255","Contrast","number",null,128],
+      ["minFlushMs","\u6700\u5C0F\u5237\u65B0\u95F4\u9694ms","MinFlush","number",null,50],
+      ["persistent","NVS","Persistent","checkbox",null,true]
+    ] },
+  "disp_text": { cat:"display", zh:"\u663E\u793A\u6587\u5B57", en:"Draw Text",
+    cmd:"display", action:"text",
+    fields:[
+      ["x","X\u5750\u6807","X","number",null,0],
+      ["y","Y\u5750\u6807(\u50CF\u7D20)","Y","number",null,0],
+      ["size","\u5B57\u53F7","Size","select",[["1","\u5C0F(6\u00D78)"],["2","\u5927(12\u00D716)"]]],
+      ["text","\u5185\u5BB9(\u652F\u6301$V:)","Text","text"],
+      ["color","\u989C\u8272","Color","select",[["1","\u4EAE(\u767D)"],["0","\u706D(\u9ED1)"]]],
+      ["wrap","\u81EA\u52A8\u6362\u884C","Wrap","checkbox",null,false]
+    ] },
+  "disp_rect": { cat:"display", zh:"\u7ED8\u5236\u77E9\u5F62", en:"Draw Rect",
+    cmd:"display", action:"rect",
+    fields:[
+      ["x","X","X","number",null,0],
+      ["y","Y","Y","number",null,0],
+      ["w","\u5BBD","W","number",null,50],
+      ["h","\u9AD8","H","number",null,20],
+      ["fill","\u586B\u5145","Fill","checkbox",null,false],
+      ["color","\u989C\u8272","Color","select",[["1","\u4EAE"],["0","\u706D"]]]
+    ] },
+  "disp_line": { cat:"display", zh:"\u7ED8\u5236\u76F4\u7EBF", en:"Draw Line",
+    cmd:"display", action:"line",
+    fields:[
+      ["x1","X1","X1","number",null,0],
+      ["y1","Y1","Y1","number",null,0],
+      ["x2","X2","X2","number",null,127],
+      ["y2","Y2","Y2","number",null,63],
+      ["color","\u989C\u8272","Color","select",[["1","\u4EAE"],["0","\u706D"]]]
+    ] },
+  "disp_hline": { cat:"display", zh:"\u6C34\u5E73\u7EBF", en:"H-Line",
+    cmd:"display", action:"hline",
+    fields:[
+      ["x","X","X","number",null,0],
+      ["y","Y","Y","number",null,18],
+      ["w","\u957F\u5EA6","W","number",null,128],
+      ["color","\u989C\u8272","Color","select",[["1","\u4EAE"],["0","\u706D"]]]
+    ] },
+  "disp_pixel": { cat:"display", zh:"\u753B\u70B9", en:"Pixel",
+    cmd:"display", action:"pixel",
+    fields:[
+      ["x","X","X","number",null,64],
+      ["y","Y","Y","number",null,32],
+      ["color","\u989C\u8272","Color","select",[["1","\u4EAE"],["0","\u706D"]]]
+    ] },
+  "disp_progress": { cat:"display", zh:"\u8FDB\u5EA6\u6761", en:"Progress Bar",
+    cmd:"display", action:"progress",
+    fields:[
+      ["x","X","X","number",null,0],
+      ["y","Y","Y","number",null,56],
+      ["w","\u5BBD","W","number",null,128],
+      ["h","\u9AD8","H","number",null,8],
+      ["value","\u5F53\u524D\u503C(\u652F\u6301$V:)","Value","text"],
+      ["max","\u6700\u5927\u503C","Max","number",null,100]
+    ] },
+  "disp_bitmap": { cat:"display", zh:"\u4F4D\u56FE", en:"Bitmap",
+    cmd:"display", action:"bitmap",
+    fields:[
+      ["x","X","X","number",null,0],
+      ["y","Y","Y","number",null,0],
+      ["w","\u5BBD(\u50CF\u7D20)","W","number",null,32],
+      ["h","\u9AD8(8\u500D\u6570)","H","number",null,32],
+      ["data","\u6570\u636E(JSON\u6570\u7EC4)","Data","textarea"]
+    ] },
+  "disp_clear": { cat:"display", zh:"\u6E05\u5C4F", en:"Clear",
+    cmd:"display", action:"clear" },
+  "disp_clear_rect": { cat:"display", zh:"\u6E05\u9664\u533A\u57DF", en:"Clear Rect",
+    cmd:"display", action:"clear_rect",
+    fields:[
+      ["x","X","X","number",null,0],
+      ["y","Y","Y","number",null,0],
+      ["w","\u5BBD","W","number",null,128],
+      ["h","\u9AD8","H","number",null,64]
+    ] },
+  "disp_flush": { cat:"display", zh:"\u5237\u65B0\u5230\u5C4F\u5E55", en:"Flush",
+    cmd:"display", action:"flush",
+    fields:[
+      ["force","\u5F3A\u5236\u5168\u5C4F","Force","checkbox",null,false]
+    ] },
+  "disp_on": { cat:"display", zh:"\u5F00\u5C4F", en:"Display On",
+    cmd:"display", action:"on" },
+  "disp_off": { cat:"display", zh:"\u5173\u5C4F", en:"Display Off",
+    cmd:"display", action:"off" },
+  "disp_contrast": { cat:"display", zh:"\u5BF9\u6BD4\u5EA6", en:"Contrast",
+    cmd:"display", action:"contrast",
+    fields:[
+      ["value","\u503C 0-255","Value","number",null,128]
+    ] },
+  "disp_invert": { cat:"display", zh:"\u53CD\u8272", en:"Invert",
+    cmd:"display", action:"invert",
+    fields:[
+      ["enabled","\u542F\u7528","Enabled","checkbox",null,false]
+    ] },
+  "disp_flip": { cat:"display", zh:"\u7FFB\u8F6C\u663E\u793A", en:"Flip",
+    cmd:"display", action:"flip",
+    fields:[
+      ["enabled","\u542F\u7528","Enabled","checkbox",null,false]
+    ] },
+  "disp_scene": { cat:"display", zh:"\u573A\u666F\u7ED8\u5236", en:"Scene Draw",
+    cmd:"display", action:"scene",
+    fields:[],
+    children:[{key:"commands",zh:"\u7ED8\u56FE\u547D\u4EE4",en:"Draw Commands",accepts:"command"}] },
+  "disp_status": { cat:"display", zh:"\u663E\u793A\u5C4F\u72B6\u6001", en:"Display Status",
+    cmd:"display", action:"status" }
 };
+
 
 /* Condition definitions */
 var CONDITION_DEFS = {
@@ -498,6 +625,8 @@ var websocketConnected = false;
 var language = localStorage.getItem("lang") || "zh";
 var presets = [];
 var panelMode = "json";
+var loopTimer = null;
+var stepIndex = 0;
 
 function translate(zh, en) { return language === "zh" ? zh : en; }
 function escapeHtml(s) { return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
@@ -704,12 +833,15 @@ function updateField(blockId, key, value) {
 }
 
 function clearCanvas() {
+  stopLoop();
   blockTree = [];
   selectedBlockId = null;
+  stepIndex = 0;
   renderCanvas();
   updateJsonPreview();
   addLogMessage(translate("\u5DF2\u6E05\u7A7A","Cleared"), "ok");
 }
+
 
 /* ============================================================
    RENDERING - PALETTE (含预设分类)
@@ -1147,14 +1279,50 @@ function updateJsonPreview() {
 /* ============================================================
    SEND
    ============================================================ */
+function stopLoop() {
+  if (loopTimer !== null) {
+    clearInterval(loopTimer);
+    loopTimer = null;
+    addLogMessage(translate("循环已停止","Loop stopped"), "ok");
+  }
+}
+
 function sendAll() {
   var json = buildFinalJson();
   if (!json) { addLogMessage(translate("\u6CA1\u6709\u547D\u4EE4","No commands"), "error"); return; }
   var mode = document.getElementById("sendMode").value;
+  var delayMs = parseInt(document.getElementById("sendDelay").value) || 500;
+
   if (mode === "batch") {
+    stopLoop();
     websocketSend(json);
-  } else {
-    var delayMs = parseInt(document.getElementById("sendDelay").value) || 500;
+  }
+  else if (mode === "loop") {
+    if (loopTimer !== null) {
+      stopLoop();
+      return;
+    }
+    websocketSend(json);
+    loopTimer = setInterval(function() {
+      var again = buildFinalJson();
+      if (again) websocketSend(again);
+    }, delayMs);
+    addLogMessage(translate("循环已启动，间隔 ","Loop started, interval ") + delayMs + "ms", "ok");
+  }
+  else if (mode === "step") {
+    stopLoop();
+    if (stepIndex >= blockTree.length) stepIndex = 0;
+    var blockJson = blockToJson(blockTree[stepIndex]);
+    if (blockJson) {
+      var def = getBlockDef(blockTree[stepIndex].type);
+      var label = def ? (language === "zh" ? def.zh : def.en) : blockTree[stepIndex].type;
+      addLogMessage("Step " + (stepIndex + 1) + "/" + blockTree.length + ": " + label, "sent");
+      websocketSend(blockJson);
+    }
+    stepIndex++;
+  }
+  else if (mode === "sequential") {
+    stopLoop();
     for (var i = 0; i < blockTree.length; i++) {
       (function(index) {
         setTimeout(function() {
@@ -1165,6 +1333,7 @@ function sendAll() {
     }
   }
 }
+
 
 /* ============================================================
    WEBSOCKET
@@ -1311,6 +1480,10 @@ function deletePreset(idx) {
    LANGUAGE
    ============================================================ */
 function applyLanguage() {
+    document.getElementById("optBatch").textContent = translate("\u6279\u91CF\uFF08\u5355\u6B21\uFF09","Batch");
+  document.getElementById("optLoop").textContent = translate("\u5FAA\u73AF\uFF08\u91CD\u590D\uFF09","Loop");
+  document.getElementById("optStep").textContent = translate("\u6B65\u8FDB\uFF08\u8C03\u8BD5\uFF09","Step");
+  document.getElementById("optSeq").textContent = translate("\u987A\u5E8F\uFF08\u9010\u6761\uFF09","Sequential");
   document.getElementById("headerTitle").textContent = translate("\u547D\u4EE4\u6784\u5EFA\u5668","Command Builder");
   document.getElementById("btnBack").innerHTML = "&larr; " + translate("\u914D\u7F6E","Config");
   document.getElementById("btnRaw").textContent = translate("\u539F\u59CB","Raw");

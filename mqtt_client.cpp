@@ -23,7 +23,7 @@
 #include "msg_dedup.h"
 #include "dual_channel.h"
 #include "encoder_engine.h"
-
+#include "display_engine.h"  // ← 新增
 
 
 
@@ -836,10 +836,11 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
             && nameStart + (int)varName.length() < (int)payload.length()
             && payload.charAt(nameStart + varName.length()) == '"') {
           float val = ScriptEngine::getVar(varName, 0);
-          int nameEnd = nameStart + varName.length() + 1;
-          payload = payload.substring(0, pos)
+            int nameEnd = nameStart + varName.length() + 1;
+          payload = payload.substring(0, pos + 1)
                     + String((int)val)
-                    + payload.substring(nameEnd);
+                    + payload.substring(nameEnd - 1);
+
           Serial.printf("[PUBLISH] Interpolated $V:%s → %d\n", varName.c_str(), (int)val);
         } else break;
       }
@@ -898,9 +899,10 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
             && payloadStr.charAt(nameStart + varName.length()) == '"') {
           float val = ScriptEngine::getVar(varName, 0);
           int nameEnd = nameStart + varName.length() + 1;
-          payloadStr = payloadStr.substring(0, pos)
+          payloadStr = payloadStr.substring(0, pos + 1)
                        + String((int)val)
-                       + payloadStr.substring(nameEnd);
+                       + payloadStr.substring(nameEnd - 1);
+
           Serial.printf("[FWD] $V:%s → %d\n", varName.c_str(), (int)val);
         } else break;
       }
@@ -1407,7 +1409,10 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
   } else if (cmd == "encoder") {  // ★ 新增
     Encoder::handleCommand(doc);
   }
-
+// ========== 新增：display 命令分发 ==========
+  else if (cmd == "display") {
+    DisplayEngine::handleCommand(doc);
+  }
 
   else if (cmd == "rtc") {
     RTC::handleCommand(doc);
@@ -1417,11 +1422,144 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
     ScriptEngine::handleCommand(doc);
   } else if (cmd == "data") {
     DataEngine::handleCommand(doc);
-  }
+  } else if (cmd == "module") {
+    String action = doc["action"].as<String>();
+    String moduleType = doc["module_type"].as<String>();
+    if (moduleType.length() == 0) moduleType = doc["moduleType"].as<String>();
 
+    int pin = doc["pin"] | -1;
+    String label = doc["label"].as<String>();
+    int interval = doc["interval"] | 5000;
 
+    if (action == "add") {
+      if (pin < 0) {
+        Serial.println("[MODULE] pin required");
+        return;
+      }
 
-  else {
+      if (moduleType == "ds18b20") {
+        JsonDocument owCmd;
+        owCmd["cmd"] = "onewire";
+        owCmd["action"] = "search";
+        owCmd["pin"] = pin;
+        OneWire::handleCommand(owCmd);
+        Serial.printf("[MODULE] DS18B20 added on pin=%d\n", pin);
+      } else if (moduleType == "dht11" || moduleType == "dht22") {
+        Serial.printf("[MODULE] %s added on pin=%d interval=%d label=%s\n", 
+                      moduleType.c_str(), pin, interval, label.c_str());
+        
+        JsonDocument resp;
+        resp["type"] = "module_add";
+        resp["deviceId"] = getDeviceId();
+        resp["moduleType"] = moduleType;
+        resp["pin"] = pin;
+        resp["label"] = label;
+        String p;
+        serializeJson(resp, p);
+        if (mqttClient.connected() && config.pubTopics.size() > 0) {
+          publishResult(p);
+        }
+      } else {
+        Serial.printf("[MODULE] Unknown module type: %s\n", moduleType.c_str());
+      }
+    } else if (action == "read") {
+      if (pin < 0) {
+        Serial.println("[MODULE] pin required");
+        return;
+      }
+
+      if (moduleType == "ds18b20") {
+        JsonDocument owCmd;
+        owCmd["cmd"] = "onewire";
+        owCmd["action"] = "read_temp";
+        owCmd["pin"] = pin;
+        if (doc.containsKey("rom")) {
+          owCmd["rom"] = doc["rom"].as<String>();
+        }
+        OneWire::handleCommand(owCmd);
+      } else if (moduleType == "dht11" || moduleType == "dht22") {
+        float humidity = -1.0f;
+        float temperature = -1.0f;
+        
+               pinMode(pin, OUTPUT);
+        unsigned long startTime = millis();
+
+        digitalWrite(pin, LOW);
+        delay(18);
+        digitalWrite(pin, HIGH);
+        delayMicroseconds(40);
+        pinMode(pin, INPUT_PULLUP);
+
+        
+        while (digitalRead(pin) == HIGH && millis() - startTime < 100) delayMicroseconds(1);
+        if (millis() - startTime >= 100) {
+          Serial.println("[MODULE] DHT timeout");
+          return;
+        }
+        
+        while (digitalRead(pin) == LOW && millis() - startTime < 100) delayMicroseconds(1);
+        while (digitalRead(pin) == HIGH && millis() - startTime < 100) delayMicroseconds(1);
+        
+                uint8_t data[5] = {0};
+        for (int i = 0; i < 40; i++) {
+          while (digitalRead(pin) == LOW && millis() - startTime < 100) delayMicroseconds(1);
+          unsigned long t = micros();
+          while (digitalRead(pin) == HIGH && millis() - startTime < 100) delayMicroseconds(1);
+          unsigned long duration = micros() - t;
+          data[i / 8] = (data[i / 8] << 1) | (duration > 40 ? 1 : 0);
+        }
+
+        if (data[4] != (uint8_t)(data[0] + data[1] + data[2] + data[3])) {
+          Serial.println("[MODULE] DHT checksum error");
+          return;
+        }
+
+        if (moduleType == "dht11") {
+          humidity = data[0];
+          temperature = data[2];
+        } else {
+          humidity = data[0] + data[1] * 0.1f;
+          int16_t tempRaw = (data[2] & 0x7F) << 8 | data[3];
+          if (data[2] & 0x80) tempRaw = -tempRaw;
+          temperature = tempRaw / 10.0f;
+        }
+
+        
+        Serial.printf("[MODULE] DHT%s pin=%d Temp=%.1f Humidity=%.1f\n", 
+                      moduleType.c_str(), pin, temperature, humidity);
+        
+        JsonDocument resp;
+        resp["type"] = "module_data";
+        resp["deviceId"] = getDeviceId();
+        resp["moduleType"] = moduleType;
+        resp["pin"] = pin;
+        resp["temperature"] = temperature;
+        resp["humidity"] = humidity;
+        if (doc.containsKey("result_var")) {
+          String varName = doc["result_var"].as<String>();
+          if (varName.length() > 0) {
+            ScriptEngine::setVar(varName, temperature, false);
+          }
+        }
+        if (doc.containsKey("result_var_hum")) {
+          String varName = doc["result_var_hum"].as<String>();
+          if (varName.length() > 0) {
+            ScriptEngine::setVar(varName, humidity, false);
+          }
+        }
+
+        String p;
+        serializeJson(resp, p);
+        if (mqttClient.connected() && config.pubTopics.size() > 0) {
+          publishResult(p);
+        }
+      } else {
+        Serial.printf("[MODULE] Unknown module type for read: %s\n", moduleType.c_str());
+      }
+    } else {
+      Serial.printf("[MODULE] Unknown action: %s\n", action.c_str());
+    }
+  } else {
     Serial.printf("[GPIO] Unknown cmd: %s\n", cmd.c_str());
   }
   // ===== ACK 响应 =====

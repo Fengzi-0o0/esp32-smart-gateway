@@ -17,11 +17,12 @@
 #include "data_engine.h"
 #include "dual_channel.h"
 #include "encoder_engine.h"
+#include "display_engine.h"  // ← 新增
 
 
 
 
-const char *OTA_VERIFY_TAG = "修复舵机释放bug，添加变频，脉冲测量，双引脚测量";
+const char *OTA_VERIFY_TAG = "DHT后端补全3";
 
 
 WebServer server(80);
@@ -189,6 +190,27 @@ void setup() {
   ScriptEngine::init();
   DataEngine::init();
   DualChannel::init(); 
+  DisplayEngine::init();  // ← 新增
+
+  // ========== 新增：恢复持久化显示屏 ==========
+  if (config.display.enabled && config.display.sdaPin >= 0) {
+      JsonDocument doc;
+      doc["cmd"] = "display";
+      doc["action"] = "init";
+      doc["sda"] = config.display.sdaPin;
+      doc["scl"] = config.display.sclPin;
+      doc["address"] = config.display.address;
+      doc["width"] = config.display.width;
+      doc["height"] = config.display.height;
+      doc["flip"] = config.display.flip;
+      doc["contrast"] = config.display.contrast;
+      doc["minFlushMs"] = config.display.minFlushMs;
+      DisplayEngine::handleCommand(doc);
+      Serial.printf("[MAIN] Display restored: %dx%d sda=%d scl=%d\n",
+                    config.display.width, config.display.height,
+                    config.display.sdaPin, config.display.sclPin);
+  }
+
 
   Serial.println("[MAIN] System ready!\n");
 }
@@ -216,5 +238,6 @@ void loop() {
   RTC::loop();
   DataEngine::loop();
   DualChannel::loop(); 
+  DisplayEngine::loop();  // ← 新增
 
 }

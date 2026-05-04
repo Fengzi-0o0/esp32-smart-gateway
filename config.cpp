@@ -228,7 +228,16 @@ void DeviceConfig::load() {
     if (e.pin >= 0) touchPins.push_back(e);
   }
 
-
+// ========== 新增：Display ==========
+  display.sdaPin     = prefs.getInt("dsp_sda", -1);
+  display.sclPin     = prefs.getInt("dsp_scl", -1);
+  display.address    = prefs.getInt("dsp_addr", 0x3C);
+  display.width      = prefs.getInt("dsp_w", 128);
+  display.height     = prefs.getInt("dsp_h", 64);
+  display.flip       = prefs.getBool("dsp_flip", false);
+  display.contrast   = prefs.getInt("dsp_ctr", 128);
+  display.minFlushMs = prefs.getInt("dsp_mfm", 50);
+  display.enabled    = prefs.getBool("dsp_en", false);
 
   prefs.end();
   Serial.println("[CONFIG] Loaded from NVS");
@@ -289,6 +298,17 @@ void DeviceConfig::save() {
     prefs.putString((p + "lbl").c_str(), touchPins[i].label);
     prefs.putBool((p + "per").c_str(), touchPins[i].persistent);
   }
+
+   // ========== 新增：Display ==========
+  prefs.putInt("dsp_sda",   display.sdaPin);
+  prefs.putInt("dsp_scl",   display.sclPin);
+  prefs.putInt("dsp_addr",  display.address);
+  prefs.putInt("dsp_w",     display.width);
+  prefs.putInt("dsp_h",     display.height);
+  prefs.putBool("dsp_flip", display.flip);
+  prefs.putInt("dsp_ctr",   display.contrast);
+  prefs.putInt("dsp_mfm",   display.minFlushMs);
+  prefs.putBool("dsp_en",   display.enabled);
 
 
   prefs.putUChar("s_cnt", subTopics.size());
@@ -404,6 +424,17 @@ void DeviceConfig::reset() {
   uartConfigs.clear();
   spiConfigs.clear();
   touchPins.clear();
+
+  // ========== 新增：Display ==========
+  display.sdaPin     = -1;
+  display.sclPin     = -1;
+  display.address    = 0x3C;
+  display.width      = 128;
+  display.height     = 64;
+  display.flip       = false;
+  display.contrast   = 128;
+  display.minFlushMs = 50;
+  display.enabled    = false;
 
 
   Serial.println("[CONFIG] Reset to defaults");
