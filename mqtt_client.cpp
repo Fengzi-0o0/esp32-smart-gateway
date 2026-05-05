@@ -152,6 +152,21 @@ static ServoEntry *findOrAddServo(int pin) {
   return nullptr;
 }
 
+struct ModuleEntry {
+  int pin;
+  String moduleType;   // "ds18b20", "dht11", "dht22"
+  String label;
+  int interval;
+  bool enabled;
+};
+static std::vector<ModuleEntry> moduleRegistry;
+
+static ModuleEntry *findModule(int pin) {
+  for (auto &m : moduleRegistry) {
+    if (m.pin == pin) return &m;
+  }
+  return nullptr;
+}
 
 // 批量上报
 static unsigned long lastBatchReport = 0;
@@ -1386,7 +1401,21 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
       config.save();
       Serial.printf("[BATCH] Interval set to %d s\n", interval);
     }
-  } else if (cmd == "sensor") {
+  } 
+  else if (cmd == "log") {
+    String message = doc["message"].as<String>();
+    String level = doc["level"] | String("info");
+    Serial.printf("[LOG][%s] %s\n", level.c_str(), message.c_str());
+    JsonDocument resp;
+    resp["type"] = "log";
+    resp["level"] = level;
+    resp["message"] = message;
+    resp["deviceId"] = getDeviceId();
+    String p;
+    serializeJson(resp, p);
+    publishResult(p);
+  }
+  else if (cmd == "sensor") {
     handleSensorCommand(doc);
   } else if (cmd == "input") {
     handleInputCommand(doc);
@@ -1422,7 +1451,9 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
     ScriptEngine::handleCommand(doc);
   } else if (cmd == "data") {
     DataEngine::handleCommand(doc);
-  } else if (cmd == "module") {
+  } 
+  
+ else if (cmd == "module") {
     String action = doc["action"].as<String>();
     String moduleType = doc["module_type"].as<String>();
     if (moduleType.length() == 0) moduleType = doc["moduleType"].as<String>();
@@ -1436,6 +1467,17 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
         Serial.println("[MODULE] pin required");
         return;
       }
+      if (findModule(pin)) {
+        Serial.printf("[MODULE] pin=%d already registered\n", pin);
+        return;
+      }
+
+      ModuleEntry entry;
+      entry.pin = pin;
+      entry.moduleType = moduleType;
+      entry.label = label.length() > 0 ? label : moduleType;
+      entry.interval = interval;
+      entry.enabled = true;
 
       if (moduleType == "ds18b20") {
         JsonDocument owCmd;
@@ -1443,32 +1485,102 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
         owCmd["action"] = "search";
         owCmd["pin"] = pin;
         OneWire::handleCommand(owCmd);
+        moduleRegistry.push_back(entry);
         Serial.printf("[MODULE] DS18B20 added on pin=%d\n", pin);
+
       } else if (moduleType == "dht11" || moduleType == "dht22") {
-        Serial.printf("[MODULE] %s added on pin=%d interval=%d label=%s\n", 
-                      moduleType.c_str(), pin, interval, label.c_str());
-        
-        JsonDocument resp;
-        resp["type"] = "module_add";
-        resp["deviceId"] = getDeviceId();
-        resp["moduleType"] = moduleType;
-        resp["pin"] = pin;
-        resp["label"] = label;
-        String p;
-        serializeJson(resp, p);
-        if (mqttClient.connected() && config.pubTopics.size() > 0) {
-          publishResult(p);
-        }
+        moduleRegistry.push_back(entry);
+        Serial.printf("[MODULE] %s added on pin=%d interval=%d label=%s\n",
+                      moduleType.c_str(), pin, interval, entry.label.c_str());
+
       } else {
         Serial.printf("[MODULE] Unknown module type: %s\n", moduleType.c_str());
+        return;
       }
+
+      JsonDocument resp;
+      resp["type"] = "module_add";
+      resp["deviceId"] = getDeviceId();
+      resp["moduleType"] = moduleType;
+      resp["pin"] = pin;
+      resp["label"] = entry.label;
+      resp["interval"] = entry.interval;
+      resp["enabled"] = true;
+      String p;
+      serializeJson(resp, p);
+      publishResult(p);
+
+    } else if (action == "remove") {
+      if (pin < 0) {
+        Serial.println("[MODULE] pin required");
+        return;
+      }
+      bool found = false;
+      for (auto it = moduleRegistry.begin(); it != moduleRegistry.end(); ++it) {
+        if (it->pin == pin) {
+          if (it->moduleType == "ds18b20") {
+            JsonDocument owCmd;
+            owCmd["cmd"] = "onewire";
+            owCmd["action"] = "reset";
+            owCmd["pin"] = pin;
+            OneWire::handleCommand(owCmd);
+          }
+          Serial.printf("[MODULE] Removed %s on pin=%d\n", it->moduleType.c_str(), pin);
+          moduleRegistry.erase(it);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        Serial.printf("[MODULE] No module on pin=%d\n", pin);
+        return;
+      }
+
+      JsonDocument resp;
+      resp["type"] = "module_remove";
+      resp["deviceId"] = getDeviceId();
+      resp["pin"] = pin;
+      String p;
+      serializeJson(resp, p);
+      publishResult(p);
+
+    } else if (action == "enable") {
+      if (pin < 0) {
+        Serial.println("[MODULE] pin required");
+        return;
+      }
+      bool en = doc["enabled"] | true;
+      ModuleEntry *m = findModule(pin);
+      if (!m) {
+        Serial.printf("[MODULE] No module on pin=%d\n", pin);
+        return;
+      }
+      m->enabled = en;
+      Serial.printf("[MODULE] %s on pin=%d %s\n",
+                    m->moduleType.c_str(), pin, en ? "enabled" : "disabled");
+
+      JsonDocument resp;
+      resp["type"] = "module_enable";
+      resp["deviceId"] = getDeviceId();
+      resp["pin"] = pin;
+      resp["enabled"] = en;
+      String p;
+      serializeJson(resp, p);
+      publishResult(p);
+
     } else if (action == "read") {
       if (pin < 0) {
         Serial.println("[MODULE] pin required");
         return;
       }
 
-      if (moduleType == "ds18b20") {
+      ModuleEntry *m = findModule(pin);
+      if (m && !m->enabled) {
+        Serial.printf("[MODULE] Module on pin=%d is disabled\n", pin);
+        return;
+      }
+
+      if (moduleType == "ds18b20" || (m && m->moduleType == "ds18b20")) {
         JsonDocument owCmd;
         owCmd["cmd"] = "onewire";
         owCmd["action"] = "read_temp";
@@ -1477,11 +1589,15 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
           owCmd["rom"] = doc["rom"].as<String>();
         }
         OneWire::handleCommand(owCmd);
-      } else if (moduleType == "dht11" || moduleType == "dht22") {
+
+      } else if (moduleType == "dht11" || moduleType == "dht22"
+                 || (m && (m->moduleType == "dht11" || m->moduleType == "dht22"))) {
+        String typeToUse = moduleType.length() > 0 ? moduleType : (m ? m->moduleType : "dht11");
+
         float humidity = -1.0f;
         float temperature = -1.0f;
-        
-               pinMode(pin, OUTPUT);
+
+        pinMode(pin, OUTPUT);
         unsigned long startTime = millis();
 
         digitalWrite(pin, LOW);
@@ -1490,17 +1606,16 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
         delayMicroseconds(40);
         pinMode(pin, INPUT_PULLUP);
 
-        
         while (digitalRead(pin) == HIGH && millis() - startTime < 100) delayMicroseconds(1);
         if (millis() - startTime >= 100) {
           Serial.println("[MODULE] DHT timeout");
           return;
         }
-        
+
         while (digitalRead(pin) == LOW && millis() - startTime < 100) delayMicroseconds(1);
         while (digitalRead(pin) == HIGH && millis() - startTime < 100) delayMicroseconds(1);
-        
-                uint8_t data[5] = {0};
+
+        uint8_t data[5] = {0};
         for (int i = 0; i < 40; i++) {
           while (digitalRead(pin) == LOW && millis() - startTime < 100) delayMicroseconds(1);
           unsigned long t = micros();
@@ -1514,7 +1629,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
           return;
         }
 
-        if (moduleType == "dht11") {
+        if (typeToUse == "dht11") {
           humidity = data[0];
           temperature = data[2];
         } else {
@@ -1524,14 +1639,13 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
           temperature = tempRaw / 10.0f;
         }
 
-        
-        Serial.printf("[MODULE] DHT%s pin=%d Temp=%.1f Humidity=%.1f\n", 
-                      moduleType.c_str(), pin, temperature, humidity);
-        
+        Serial.printf("[MODULE] DHT%s pin=%d Temp=%.1f Humidity=%.1f\n",
+                      typeToUse.c_str(), pin, temperature, humidity);
+
         JsonDocument resp;
         resp["type"] = "module_data";
         resp["deviceId"] = getDeviceId();
-        resp["moduleType"] = moduleType;
+        resp["moduleType"] = typeToUse;
         resp["pin"] = pin;
         resp["temperature"] = temperature;
         resp["humidity"] = humidity;
@@ -1547,19 +1661,36 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
             ScriptEngine::setVar(varName, humidity, false);
           }
         }
-
         String p;
         serializeJson(resp, p);
-        if (mqttClient.connected() && config.pubTopics.size() > 0) {
-          publishResult(p);
-        }
+        publishResult(p);
+
       } else {
         Serial.printf("[MODULE] Unknown module type for read: %s\n", moduleType.c_str());
       }
+
+    } else if (action == "list") {
+      JsonDocument resp;
+      resp["type"] = "module_list";
+      resp["deviceId"] = getDeviceId();
+      JsonArray arr = resp["modules"].to<JsonArray>();
+      for (auto &m : moduleRegistry) {
+        JsonObject o = arr.add<JsonObject>();
+        o["pin"] = m.pin;
+        o["moduleType"] = m.moduleType;
+        o["label"] = m.label;
+        o["interval"] = m.interval;
+        o["enabled"] = m.enabled;
+      }
+      String p;
+      serializeJson(resp, p);
+      publishResult(p);
+      Serial.printf("[MODULE] List published (%d modules)\n", moduleRegistry.size());
+
     } else {
       Serial.printf("[MODULE] Unknown action: %s\n", action.c_str());
     }
-  } else {
+  }else {
     Serial.printf("[GPIO] Unknown cmd: %s\n", cmd.c_str());
   }
   // ===== ACK 响应 =====

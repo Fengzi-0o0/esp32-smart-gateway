@@ -176,8 +176,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
     <label id="labelDelay">Delay(ms):</label>
     <input type="number" id="sendDelay" value="500" min="0" step="100">
   </div>
+  <div style="flex:1"></div>
+  <span id="deviceInfo" style="display:flex;align-items:center;gap:5px;padding:3px 8px;border-radius:4px;background:rgba(0,212,255,.06);border:1px solid var(--border);font-size:9px;color:var(--cyan);font-family:'JetBrains Mono',monospace;white-space:nowrap;letter-spacing:.3px;opacity:.8"></span>
 </div>
 <div class="workspace">
+
   <div class="palette">
     <div class="palette-tabs" id="paletteTabs"></div>
     <div class="palette-list" id="paletteList"></div>
@@ -1515,11 +1518,28 @@ function toggleLanguage() {
 /* ============================================================
    INIT
    ============================================================ */
+function loadDeviceInfo() {
+  fetch("/api/info").then(function(r){ return r.json(); }).then(function(data) {
+    var name = data.deviceName || data.deviceId || "";
+    var mac = data.mac || data.deviceId || "";
+    var text = name;
+    if (mac && mac !== name) text += " | " + mac;
+    document.getElementById("deviceInfo").textContent = text;
+  }).catch(function() {
+    fetch("/api/devices").then(function(r){ return r.json(); }).then(function(data) {
+      var id = data.deviceId || "";
+      if (id) document.getElementById("deviceInfo").textContent = id;
+    }).catch(function(){});
+  });
+}
+
 document.addEventListener("DOMContentLoaded", function() {
   applyLanguage();
   connectWebSocket();
   loadPresets();
+  loadDeviceInfo();
 });
+
 </script>
 </body>
 </html>
