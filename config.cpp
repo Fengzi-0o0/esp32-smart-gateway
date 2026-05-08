@@ -53,6 +53,7 @@ String getDeviceId() {
 }
 
 void DeviceConfig::load() {
+  _dirty = false;
   prefs.begin("cfg", true);
 
   staSsid = prefs.getString("s_ssid", "");
@@ -394,6 +395,7 @@ void DeviceConfig::save() {
 
 
   prefs.end();
+  _dirty = false;
   Serial.println("[CONFIG] Saved to NVS");
 }
 

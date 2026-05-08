@@ -9,7 +9,7 @@
 #include <Adafruit_SSD1306.h>
 
 // ================================================================
-//  I2C 冲突检测变量（供 i2c_engine.cpp 访问）
+//  I2C 冲突检测变量（�?i2c_engine.cpp 访问�?
 // ================================================================
 namespace DisplayEngine {
     int displaySda = -1;
@@ -17,7 +17,7 @@ namespace DisplayEngine {
 }
 
 // ================================================================
-//  内部状态
+//  内部状�?
 // ================================================================
 static Adafruit_SSD1306 *oled = nullptr;
 static bool initialized = false;
@@ -70,7 +70,7 @@ static String interpolateVars(const String &input) {
         if (varName.length() > 0) {
             float val = ScriptEngine::getVar(varName, 0);
             String valStr;
-            // 如果是整数则显示整数，否则保留1位小数
+            // 如果是整数则显示整数，否则保�?位小�?
             if (val == (int)val) valStr = String((int)val);
             else valStr = String(val, 1);
             result = result.substring(0, pos) + valStr + result.substring(pos + 3 + varName.length());
@@ -82,7 +82,7 @@ static String interpolateVars(const String &input) {
     return result;
 }
 
-// UTF-8 解码单个字符，返回 Unicode 码点和字节数
+// UTF-8 解码单个字符，返�?Unicode 码点和字节数
 static uint32_t utf8Decode(const char *s, int *bytesUsed) {
     uint8_t c = (uint8_t)s[0];
     if (c < 0x80) { *bytesUsed = 1; return c; }
@@ -91,53 +91,53 @@ static uint32_t utf8Decode(const char *s, int *bytesUsed) {
     *bytesUsed = 1; return c;
 }
 
-// Unicode → GB2312 简易转换（覆盖常用汉字）
+// Unicode �?GB2312 简易转换（覆盖常用汉字�?
 static uint16_t unicodeToGb2312(uint32_t unicode) {
     // ASCII
     if (unicode < 0x80) return (uint16_t)unicode;
 
-    // 查表：常用 Unicode → GB2312 映射
-    // 这里用一个简单的映射表覆盖方案中列出的字符
+    // 查表：常�?Unicode �?GB2312 映射
+    // 这里用一个简单的映射表覆盖方案中列出的字�?
     static const struct { uint32_t uni; uint16_t gb; } map[] = {
-        {0x6E29, 0xCEC2}, // 温
-        {0x5EA6, 0xB6C8}, // 度
-        {0x6E7F, 0xCAAA}, // 湿
-        {0x72B6, 0xD7B4}, // 状
-        {0x6001, 0xCCAC}, // 态
+        {0x6E29, 0xCEC2}, // �?
+        {0x5EA6, 0xB6C8}, // �?
+        {0x6E7F, 0xCAAA}, // �?
+        {0x72B6, 0xD7B4}, // �?
+        {0x6001, 0xCCAC}, // �?
         {0x5F00, 0xBFAA}, // 开
-        {0x5173, 0xB9D8}, // 关
-        {0x8BBE, 0xC9E8}, // 设
-        {0x7F6E, 0xD6C3}, // 置
-        {0x65F6, 0xCAB1}, // 时
-        {0x9AD8, 0xB8DF}, // 高
-        {0x4F4E, 0xB5CD}, // 低
-        {0x7CFB, 0xCFB5}, // 系
-        {0x7EDF, 0xCDB3}, // 统
-        {0x8FD0, 0xD4CB}, // 运
-        {0x884C, 0xD0D0}, // 行
-        {0x505C, 0xCDA3}, // 停
-        {0x5728, 0xD4DA}, // 在
-        {0x7EBF, 0xCFDF}, // 线
-        {0x79BB, 0xC0EB}, // 离
-        {0x7F51, 0xCDF8}, // 网
-        {0x4FE1, 0xD0C5}, // 信
-        {0x53F7, 0xBAC5}, // 号
-        {0x7535, 0xB5E7}, // 电
-        {0x6D41, 0xC1F7}, // 流
-        {0x529F, 0xB9A6}, // 功
-        {0x5907, 0xB1B8}, // 备
-        {0x540D, 0xC3FB}, // 名
-        {0x79F0, 0xB3C6}, // 称
-        {0x81EA, 0xD7D4}, // 自
-        {0x52A8, 0xB6AF}, // 动
-        {0x65B0, 0xD0C2}, // 新
-        {0x6B63, 0xD5FD}, // 正
-        {0x5E38, 0xB3A3}, // 常
+        {0x5173, 0xB9D8}, // �?
+        {0x8BBE, 0xC9E8}, // �?
+        {0x7F6E, 0xD6C3}, // �?
+        {0x65F6, 0xCAB1}, // �?
+        {0x9AD8, 0xB8DF}, // �?
+        {0x4F4E, 0xB5CD}, // �?
+        {0x7CFB, 0xCFB5}, // �?
+        {0x7EDF, 0xCDB3}, // �?
+        {0x8FD0, 0xD4CB}, // �?
+        {0x884C, 0xD0D0}, // �?
+        {0x505C, 0xCDA3}, // �?
+        {0x5728, 0xD4DA}, // �?
+        {0x7EBF, 0xCFDF}, // �?
+        {0x79BB, 0xC0EB}, // �?
+        {0x7F51, 0xCDF8}, // �?
+        {0x4FE1, 0xD0C5}, // �?
+        {0x53F7, 0xBAC5}, // �?
+        {0x7535, 0xB5E7}, // �?
+        {0x6D41, 0xC1F7}, // �?
+        {0x529F, 0xB9A6}, // �?
+        {0x5907, 0xB1B8}, // �?
+        {0x540D, 0xC3FB}, // �?
+        {0x79F0, 0xB3C6}, // �?
+        {0x81EA, 0xD7D4}, // �?
+        {0x52A8, 0xB6AF}, // �?
+        {0x65B0, 0xD0C2}, // �?
+        {0x6B63, 0xD5FD}, // �?
+        {0x5E38, 0xB3A3}, // �?
     };
     for (int i = 0; i < (int)(sizeof(map)/sizeof(map[0])); i++) {
         if (map[i].uni == unicode) return map[i].gb;
     }
-    return 0; // 未找到
+    return 0; // 未找�?
 }
 
 // 查找中文字模
@@ -149,11 +149,11 @@ static const uint8_t* findCnBitmap(uint16_t gb) {
     return nullptr;
 }
 
-// 绘制单个中文字符（16×16）
+// 绘制单个中文字符�?6×16�?
 static void drawChineseChar(int x, int y, uint16_t gb, uint16_t color) {
     const uint8_t *bmp = findCnBitmap(gb);
     if (!bmp) {
-        // 未找到字模，画方框占位
+        // 未找到字模，画方框占�?
         if (oled) oled->drawRect(x, y, 16, 16, color);
         return;
     }
@@ -184,7 +184,7 @@ static void drawText(JsonDocument &doc) {
     int color = doc["color"] | 1;
     bool wrap = doc["wrap"] | false;
 
-    // 变量插值
+    // 变量插�?
     text = interpolateVars(text);
 
     oled->setTextSize(sz);
@@ -194,7 +194,7 @@ static void drawText(JsonDocument &doc) {
     int curY = y;
     int charW = (sz == 2) ? 12 : 6;
     int charH = (sz == 2) ? 16 : 8;
-    int cnW = 16; // 中文字符固定16像素宽
+    int cnW = 16; // 中文字符固定16像素�?
 
     const char *str = text.c_str();
     int len = text.length();
@@ -223,7 +223,7 @@ static void drawText(JsonDocument &doc) {
             if (gb != 0) {
                 drawChineseChar(curX, curY, gb, color ? WHITE : BLACK);
             } else {
-                // 未知字符，画占位框
+                // 未知字符，画占位�?
                 oled->drawRect(curX, curY, cnW, charH, color ? WHITE : BLACK);
             }
             curX += cnW;
@@ -288,7 +288,7 @@ static void drawProgressCmd(JsonDocument &doc) {
     int w = doc["w"] | 128;
     int h = doc["h"] | 8;
 
-    // value 支持数字和字符串（含 $V: 变量）
+    // value 支持数字和字符串（含 $V: 变量�?
     float value = 0;
     if (doc["value"].is<int>()) {
         value = (float)doc["value"].as<int>();
@@ -310,7 +310,7 @@ static void drawProgressCmd(JsonDocument &doc) {
     if (fillW > w - 2) fillW = w - 2;
     if (fillW > 0)
         oled->fillRect(x + 1, y + 1, fillW, h - 2, WHITE);
-    // 清除填充外区域
+    // 清除填充外区�?
     if (fillW < w - 2)
         oled->fillRect(x + 1 + fillW, y + 1, w - 2 - fillW, h - 2, BLACK);
 
@@ -338,12 +338,12 @@ static void drawBitmapCmd(JsonDocument &doc) {
         free(buf);
     }
     else if (doc.containsKey("base64")) {
-        // Base64 解码（简化版）
+        // Base64 解码（简化版�?
         String b64 = doc["base64"].as<String>();
         int expectedBytes = (w * h + 7) / 8;
         uint8_t *buf = (uint8_t *)malloc(expectedBytes);
         if (!buf) return;
-        // 简易 Base64 解码
+        // 简�?Base64 解码
         const char *b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         int outIdx = 0;
         uint32_t acc = 0;
@@ -368,7 +368,7 @@ static void drawBitmapCmd(JsonDocument &doc) {
 }
 
 // ================================================================
-//  局部刷新（智能脏页 + 自适应帧率）
+//  局部刷新（智能脏页 + 自适应帧率�?
 // ================================================================
 
 static void flushDirty(bool force = false) {
@@ -388,7 +388,7 @@ static void flushDirty(bool force = false) {
         int offset = page * screenW;
 
         if (!force) {
-            // 智能脏页：对比当前帧和上一帧
+            // 智能脏页：对比当前帧和上一�?
             if (memcmp(&buf[offset], &lastFrameBuf[offset], screenW) == 0)
                 continue;
         }
@@ -397,11 +397,11 @@ static void flushDirty(bool force = false) {
         Wire.beginTransmission(screenAddr);
         Wire.write(0x00);            // 命令模式
         Wire.write(0xB0 | page);     // 页地址
-        Wire.write(0x00);            // 列起始低4位
-        Wire.write(0x10);            // 列起始高4位
+        Wire.write(0x00);            // 列起始低4�?
+        Wire.write(0x10);            // 列起始高4�?
         Wire.endTransmission();
 
-        // 发送128字节数据
+        // 发�?28字节数据
         Wire.beginTransmission(screenAddr);
         Wire.write(0x40);            // 数据模式
         Wire.write(&buf[offset], screenW);
@@ -428,7 +428,7 @@ static void flushDirty(bool force = false) {
         flushInterval = max(baseInterval, costMs * 8);
     } else {
         idleCount++;
-        // 无变化 → 逐步延长，上限 2000ms
+        // 无变�?�?逐步延长，上�?2000ms
         flushInterval = min(baseInterval * (1UL << min(idleCount, 5)), 2000UL);
     }
 
@@ -453,11 +453,11 @@ static bool initDisplay(int sda, int scl, int addr, int w, int h, bool flip, int
         return false;
     }
 
-    // Wire 初始化
+    // Wire 初始�?
     Wire.begin(sda, scl);
     Wire.setClock(400000);
 
-    // SSD1306 初始化
+    // SSD1306 初始�?
     if (!oled->begin(SSD1306_SWITCHCAPVCC, addr)) {
         Serial.println("[DISPLAY] SSD1306 init failed");
         delete oled;
@@ -473,16 +473,16 @@ static bool initDisplay(int sda, int scl, int addr, int w, int h, bool flip, int
     oled->clearDisplay();
     oled->display(); // 首次全屏刷新
 
-    // 记录状态
+    // 记录状�?
     screenW = w;
     screenH = h;
     screenAddr = addr;
 
-    // 记录引脚供 I2C 冲突检测
+    // 记录引脚�?I2C 冲突检�?
     DisplayEngine::displaySda = sda;
     DisplayEngine::displayScl = scl;
 
-    // 初始化 lastFrameBuf
+    // 初始�?lastFrameBuf
     memset(lastFrameBuf, 0, sizeof(lastFrameBuf));
     markAllDirty();
     dirtyPages = 0;
@@ -508,7 +508,7 @@ void init() {
 }
 
 void loop() {
-    // 自适应刷新：定时检查是否需要刷新
+    // 自适应刷新：定时检查是否需要刷�?
     // if (initialized && dirtyPages) {
     //     flushDirty(false);
     // }
@@ -538,7 +538,7 @@ void handleCommand(JsonDocument &doc) {
         bool persist = doc["persistent"] | false;
 
         if (initDisplay(sda, scl, addr, w, h, flip, contrast)) {
-            // 持久化
+            // 持久�?
             if (persist) {
                 config.display.sdaPin = sda;
                 config.display.sclPin = scl;
@@ -549,7 +549,7 @@ void handleCommand(JsonDocument &doc) {
                 config.display.contrast = contrast;
                 config.display.minFlushMs = (int)baseInterval;
                 config.display.enabled = true;
-                config.save();
+                config.markDirty();
             }
 
             JsonDocument resp;
@@ -670,7 +670,7 @@ void handleCommand(JsonDocument &doc) {
             oled->ssd1306_command(SSD1306_SEGREMAP);        // 0xA0
             oled->ssd1306_command(SSD1306_COMSCANINC);      // 0xC0
         } else {
-            // 恢复正常（Adafruit默认方向）
+            // 恢复正常（Adafruit默认方向�?
             oled->ssd1306_command(SSD1306_SEGREMAP | 0x01); // 0xA1
             oled->ssd1306_command(SSD1306_COMSCANDEC);      // 0xC8
         }

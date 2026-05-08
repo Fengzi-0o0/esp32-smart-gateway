@@ -10,6 +10,7 @@ static DeviceEntry devices[DC_MAX_DEVICES];
 static int devCount = 0;
 static PendingMsg pending[DC_PENDING_SIZE];
 static unsigned long lastDiscover = 0;
+static unsigned long lastMqttHeartbeat = 0;
 static int lanConsecutiveFails = 0;
 static unsigned long lastLanFailTime = 0;
 // 放在 sendToTarget 函数之前
@@ -186,6 +187,18 @@ void loop() {
     discoverDevices();
   }
 
+  // 定时 MQTT 心跳
+  if (MqttClient::isConnected() && now - lastMqttHeartbeat > DC_MQTT_HEARTBEAT_MS) {
+    lastMqttHeartbeat = now;
+    JsonDocument hb;
+    hb["deviceId"] = getDeviceId();
+    hb["deviceName"] = config.deviceName;
+    hb["online"] = true;
+    String json;
+    serializeJson(hb, json);
+    MqttClient::publish("esp32/status", json.c_str());
+  }
+
   // LAN 客户端维护
   LanClient::loop();
 
@@ -206,11 +219,19 @@ void loop() {
     }
   }
 
-  // 设备超时标记
+  // LAN 设备超时标记
   for (int i = 0; i < devCount; i++) {
-    if (devices[i].lanOnline && (now - devices[i].lastSeen > DC_DEVICE_TIMEOUT)) {
+    if (devices[i].lanOnline && (now - devices[i].lastLanSeen > DC_DEVICE_TIMEOUT)) {
       devices[i].lanOnline = false;
       Serial.printf("[DC] %s LAN timeout\n", devices[i].deviceName.c_str());
+    }
+  }
+
+  // MQTT 设备超时标记
+  for (int i = 0; i < devCount; i++) {
+    if (devices[i].mqttOnline && (now - devices[i].lastMqttSeen > DC_DEVICE_TIMEOUT)) {
+      devices[i].mqttOnline = false;
+      Serial.printf("[DC] %s MQTT timeout\n", devices[i].deviceName.c_str());
     }
   }
 }
@@ -224,7 +245,7 @@ void registerDevice(const String &id, const String &name,
       devices[i].deviceName = name;
       devices[i].ip = ip;
       devices[i].port = port;
-      devices[i].lastSeen = millis();
+      devices[i].lastLanSeen = millis();
       devices[i].lanOnline = true;
       return;
     }
@@ -235,7 +256,8 @@ void registerDevice(const String &id, const String &name,
     d.deviceName = name;
     d.ip = ip;
     d.port = port;
-    d.lastSeen = millis();
+    d.lastLanSeen = millis();
+    d.lastMqttSeen = 0;
     d.lanOnline = true;
     d.mqttOnline = false;
     Serial.printf("[DC] Registered: %s (%s) @ %s:%u\n",
@@ -243,24 +265,26 @@ void registerDevice(const String &id, const String &name,
   }
 }
 
-void updateMqttStatus(const String &id, bool online) {
+void updateMqttStatus(const String &id, bool online, const String &name) {
   for (int i = 0; i < devCount; i++) {
     if (devices[i].deviceId == id) {
       devices[i].mqttOnline = online;
+      if (online) devices[i].lastMqttSeen = millis();
+      if (name.length() > 0) devices[i].deviceName = name;
       return;
     }
   }
-  // 不在注册表中 → 自动注册（无 IP）
   if (online && devCount < DC_MAX_DEVICES) {
     DeviceEntry &d = devices[devCount++];
     d.deviceId = id;
-    d.deviceName = "";
+    d.deviceName = name;
     d.ip = "";
     d.port = 0;
-    d.lastSeen = millis();
+    d.lastLanSeen = 0;
+    d.lastMqttSeen = millis();
     d.lanOnline = false;
     d.mqttOnline = true;
-    Serial.printf("[DC] MQTT-only: %s\n", id.c_str());
+    Serial.printf("[DC] MQTT-only: %s (%s)\n", id.c_str(), name.c_str());
   }
 }
 
@@ -283,9 +307,9 @@ RouteChannel decideRoute(DeviceEntry *dev) {
     if (MqttClient::isConnected()) return ROUTE_MQTT;
     return ROUTE_NONE;
   }
-  // ★ 只检查设备信息是否完整 + 是否超时，不检查 lanOnline 标记
-  bool lanOk = dev->ip.length() > 0 && (millis() - dev->lastSeen < DC_DEVICE_TIMEOUT);
+  bool lanOk = dev->lanOnline && dev->ip.length() > 0 && (millis() - dev->lastLanSeen < DC_DEVICE_TIMEOUT);
   if (lanOk) return ROUTE_LAN;
+  if (dev->mqttOnline && MqttClient::isConnected()) return ROUTE_MQTT;
   if (MqttClient::isConnected()) return ROUTE_MQTT;
   return ROUTE_NONE;
 }
@@ -366,7 +390,7 @@ bool sendToTargetLan(const String &target, const String &json) {
   DeviceEntry *dev = findDevice(target);
   if (!dev) return false;
 
-  bool lanOk = dev->lanOnline && dev->ip.length() > 0 && (millis() - dev->lastSeen < DC_DEVICE_TIMEOUT);
+  bool lanOk = dev->lanOnline && dev->ip.length() > 0 && (millis() - dev->lastLanSeen < DC_DEVICE_TIMEOUT);
   if (!lanOk) return false;
 
   bool ok = LanClient::sendToDevice(dev->ip, dev->port ? dev->port : 8080, json);
@@ -438,6 +462,8 @@ String toJson() {
     o["ip"] = devices[i].ip;
     o["lan"] = devices[i].lanOnline;
     o["mqtt"] = devices[i].mqttOnline;
+    o["lanAge"] = devices[i].lastLanSeen ? (int)((millis() - devices[i].lastLanSeen) / 1000) : -1;
+    o["mqttAge"] = devices[i].lastMqttSeen ? (int)((millis() - devices[i].lastMqttSeen) / 1000) : -1;
     RouteChannel r = decideRoute(&devices[i]);
     o["route"] = (r == ROUTE_LAN) ? "lan" : (r == ROUTE_MQTT) ? "mqtt"
                                                               : "none";

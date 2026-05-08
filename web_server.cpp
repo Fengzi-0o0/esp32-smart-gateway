@@ -162,7 +162,10 @@ static void handlePostConfig() {
     config.deviceName = doc["deviceName"].as<String>();
   }
   if (doc.containsKey("batchInterval")) {
-    config.batchInterval = doc["batchInterval"].as<int>();
+    int bi = doc["batchInterval"].as<int>();
+    if (bi < 0) bi = 0;
+    if (bi > 3600) bi = 3600;
+    config.batchInterval = bi;
     Serial.printf("[WEB] Batch interval: %d s\n", config.batchInterval);
   }
 
@@ -202,7 +205,7 @@ static void handlePostConfig() {
     Serial.printf("[WEB] PubTopics: %d\n", config.pubTopics.size());
   }
 
-  config.save();
+  config.markDirty();
   server.send(200, "application/json", "{\"ok\":true}");
   Serial.println("[WEB] Config saved");
 
@@ -290,7 +293,7 @@ static void handleGetDevice() {
   server.send(200, "application/json", json);
 }
 
-// ==================== 新增：设备名称独立保存 ====================
+// ==================== 新增：设备名称独立保�?====================
 
 static void handlePostDevice() {
   if (!server.hasArg("plain")) {
@@ -311,7 +314,7 @@ static void handlePostDevice() {
     Serial.printf("[WEB] Device name updated: %s\n", config.deviceName.c_str());
   }
 
-  config.save();
+  config.markDirty();
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -333,7 +336,7 @@ static void handleGetPinCapabilities() {
     o["touch"] = pinCaps[i].touch;
     o["altFunc"] = pinCaps[i].altFunc;
   }
-  doc["note"] = "GPIO 33-37 为 Flash SPI 专用，禁止使用";
+  doc["note"] = "GPIO 33-37 are Flash SPI reserved, do not use";
   doc["validPins"] = validExternalPinsCount;
 
   String json;
@@ -343,7 +346,7 @@ static void handleGetPinCapabilities() {
 
 
 
-// ==================== 新增：批量状态查询 ====================
+// ==================== 新增：批量状态查�?====================
 
 static void handleGetBatchStatus() {
   JsonDocument doc;
@@ -431,7 +434,7 @@ static void handleGetSystem() {
 }
 
 
-// ==================== 指令编辑器页面 ====================
+// ==================== 指令编辑器页�?====================
 
 static void handleCmdBuilderPage() {
   server.send_P(200, "text/html", CMD_BUILDER_PAGE);
@@ -458,6 +461,7 @@ static void handleGetDevices() {
     o["name"] = dev->deviceName;
     o["ip"] = dev->ip;
     o["lan"] = dev->lanOnline;
+    o["mqtt"] = dev->mqttOnline;
   }
 
   String json;
@@ -573,7 +577,7 @@ static void wsOtaEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t leng
 }
 
 
-// ==================== WebServer 初始化 ====================
+// ==================== WebServer 初始�?====================
 
 namespace WebServerManager {
 

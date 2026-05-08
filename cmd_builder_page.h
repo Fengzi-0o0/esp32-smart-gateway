@@ -1035,6 +1035,8 @@ function renderBlock(block, isChild) {
   /* raw_cmd 特殊渲染 */
   if (def.cmd === "__raw__") {
     var jsonVal = block.params.json || "";
+    var remarkVal = block.params.remark || "";
+    html += '<div class="field"><input type="text" value="' + escapeHtml(remarkVal) + '" maxlength="30" placeholder="' + translate('\u5907\u6CE8\uFF1A\u6B64\u5904\u586B\u5199\u6307\u4EE4\u529F\u80FD\u8BF4\u660E','Remark: describe what this command does') + '" onchange="updateField(' + block.id + ',\'remark\',this.value)" style="width:100%;color:var(--amber);font-size:11px;text-align:center"></div>';
     html += '<div class="field"><label>' + translate('JSON \u6570\u636E','JSON Data') + '</label>';
     html += '<textarea style="width:100%;min-height:60px;padding:5px 7px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--cyan);font-size:11px;font-family:monospace;outline:none;resize:vertical" onchange="updateField(' + block.id + ',\'json\',this.value)">' + escapeHtml(jsonVal) + '</textarea></div>';
     html += '<div class="target-override"><label>' + translate('Target \u8986\u76D6 (\u7A7A=\u5168\u5C40)','Target override (empty=global)') + '</label>';

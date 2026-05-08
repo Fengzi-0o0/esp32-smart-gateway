@@ -23,7 +23,7 @@
 #include "msg_dedup.h"
 #include "dual_channel.h"
 #include "encoder_engine.h"
-#include "display_engine.h"  // ← 新增
+#include "display_engine.h"  // �?新增
 
 
 
@@ -44,6 +44,11 @@ void setResultSink(uint8_t clientNum, WsSendFunc fn) {
   _wsSend = fn;
 }
 
+void clearResultSink() {
+  _wsClient = 0xFF;
+  _wsSend = nullptr;
+}
+
 static void publishResult(const String &payload) {
   if (mqttClient.connected() && config.pubTopics.size() > 0)
     mqttClient.publish(config.pubTopics[0].topic.c_str(), payload.c_str());
@@ -54,9 +59,9 @@ static void publishResult(const String &payload) {
 bool MqttClient::publish(const String &json) {
   if (!mqttClient.connected()) return false;
 
-  // ═══════════════════════════════════════════════════════════
-  // ★★★ 新增：注入 _from 字段，让接收方能识别消息来源 ★★★
-  // ═══════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════�?
+  // ★★�?新增：注�?_from 字段，让接收方能识别消息来源 ★★�?
+  // ══════════════════════════════════════════════════════════�?
   String finalJson = json;
   {
     JsonDocument doc;
@@ -65,12 +70,12 @@ bool MqttClient::publish(const String &json) {
       serializeJson(doc, finalJson);
     }
   }
-  // ═══════════════════════════════════════════════════════════
-  // ★★★ 新增结束 ★★★
-  // ═══════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════�?
+  // ★★�?新增结束 ★★�?
+  // ══════════════════════════════════════════════════════════�?
 
   bool anyOk = false;
-  // 发到 subTopics（所有设备都订阅的共享命令通道）
+  // 发到 subTopics（所有设备都订阅的共享命令通道�?
   for (size_t i = 0; i < config.subTopics.size(); i++) {
     if (mqttClient.publish(config.subTopics[i].topic.c_str(), finalJson.c_str()))
       anyOk = true;
@@ -109,7 +114,7 @@ static unsigned long otaLastChunk = 0;
 
 
 
-// PubSubClient 错误码转字符串
+// PubSubClient 错误码转字符�?
 static const char *mqttErrorString(int rc) {
   switch (rc) {
     case -4: return "CONNECTION_TIMEOUT";
@@ -171,8 +176,8 @@ static ModuleEntry *findModule(int pin) {
 // 批量上报
 static unsigned long lastBatchReport = 0;
 static const char *LWT_TOPIC = "esp32/status";
-static const char *LWT_ONLINE = "{\"online\":true}";
-static const char *LWT_OFFLINE = "{\"online\":false}";
+static String lwtOnlineMsg;
+static String lwtOfflineMsg;
 
 static void publishBatchStatus() {
   if (!mqttClient.connected() || config.pubTopics.size() == 0) return;
@@ -180,7 +185,7 @@ static void publishBatchStatus() {
   JsonDocument doc;
   doc["type"] = "batch_status";
   doc["deviceId"] = getDeviceId();
-  doc["mac"] = WiFi.macAddress();  //设备序列号
+  doc["mac"] = WiFi.macAddress();  //设备序列�?
   doc["timestamp"] = millis();
   doc["heapFree"] = ESP.getFreeHeap();
   doc["uptime"] = millis() / 1000;
@@ -231,7 +236,7 @@ void executeCommand(JsonDocument &doc) {
   executeCommandImpl(doc);
 }
 
-// 传感器指令处理
+// 传感器指令处�?
 static void handleSensorCommand(JsonDocument &doc) {
   String action = doc["action"].as<String>();
 
@@ -256,7 +261,7 @@ static void handleSensorCommand(JsonDocument &doc) {
       config.sensors.back().persistent = persist;
 
       if (persist) {
-        config.save();
+        config.markDirty();
         Serial.printf("[SENSOR] Added pin=%d interval=%d type=%d label=%s (persistent)\n",
                       s.pin, s.interval, s.type, s.label.c_str());
       } else {
@@ -271,7 +276,7 @@ static void handleSensorCommand(JsonDocument &doc) {
       if (it->pin == pin) {
         bool wasPersistent = it->persistent;
         config.sensors.erase(it);
-        if (wasPersistent) config.save();  // 只有原本持久化的才需要更新NVS
+        if (wasPersistent) config.markDirty();  // 只有原本持久化的才需要更新NVS
         Serial.printf("[SENSOR] Removed pin=%d\n", pin);
         break;
       }
@@ -283,7 +288,7 @@ static void handleSensorCommand(JsonDocument &doc) {
     for (auto &s : config.sensors) {
       if (s.pin == pin) {
         s.enabled = en;
-        if (s.persistent) config.save();  // 只有持久化的才需要更新NVS
+        if (s.persistent) config.markDirty();  // 只有持久化的才需要更新NVS
         Serial.printf("[SENSOR] Pin %d %s\n", pin, en ? "enabled" : "disabled");
         break;
       }
@@ -295,7 +300,7 @@ static void handleSensorCommand(JsonDocument &doc) {
     for (auto &s : config.sensors) {
       if (s.pin == pin) {
         s.interval = interval;
-        if (s.persistent) config.save();  // 只有持久化的才需要更新NVS
+        if (s.persistent) config.markDirty();  // 只有持久化的才需要更新NVS
         Serial.printf("[SENSOR] Pin %d interval=%d\n", pin, interval);
         break;
       }
@@ -342,7 +347,7 @@ static void handleSensorCommand(JsonDocument &doc) {
       o["type"] = s.type;
       o["enabled"] = s.enabled;
       o["label"] = s.label;
-      o["persistent"] = s.persistent;  // 新增：列表中也显示持久化状态
+      o["persistent"] = s.persistent;  // 新增：列表中也显示持久化状�?
     }
     String p;
     serializeJson(resp, p);
@@ -390,7 +395,7 @@ static void handleInputCommand(JsonDocument &doc) {
         config.inputs.push_back(t);
 
         if (persist) {
-          config.save();
+          config.markDirty();
           Serial.printf("[INPUT] Added pin=%d mode=%d lbl=%s (persistent)\n",
                         t.pin, t.mode, t.label.c_str());
         } else {
@@ -406,7 +411,7 @@ static void handleInputCommand(JsonDocument &doc) {
       if (it->pin == pin) {
         bool wasPersistent = it->persistent;
         config.inputs.erase(it);
-        if (wasPersistent) config.save();  // 只有原本持久化的才需要更新NVS
+        if (wasPersistent) config.markDirty();  // 只有原本持久化的才需要更新NVS
         Serial.printf("[INPUT] Removed pin=%d\n", pin);
         break;
       }
@@ -418,7 +423,7 @@ static void handleInputCommand(JsonDocument &doc) {
     for (auto &t : config.inputs) {
       if (t.pin == pin) {
         t.enabled = en;
-        if (t.persistent) config.save();  // 只有持久化的才需要更新NVS
+        if (t.persistent) config.markDirty();  // 只有持久化的才需要更新NVS
         Serial.printf("[INPUT] Pin %d %s\n", pin, en ? "enabled" : "disabled");
         break;
       }
@@ -436,7 +441,7 @@ static void handleInputCommand(JsonDocument &doc) {
       o["enabled"] = t.enabled;
       o["label"] = t.label;
       o["lastValue"] = t.lastValue;
-      o["persistent"] = t.persistent;  // 新增：列表中也显示持久化状态
+      o["persistent"] = t.persistent;  // 新增：列表中也显示持久化状�?
     }
     String p;
     serializeJson(resp, p);
@@ -451,7 +456,7 @@ static void handleInputCommand(JsonDocument &doc) {
 }
 
 
-// 定时器指令处理
+// 定时器指令处�?
 static void handleTimerCommand(JsonDocument &doc) {
   String action = doc["action"].as<String>();
 
@@ -465,7 +470,7 @@ static void handleTimerCommand(JsonDocument &doc) {
     t.executed = 0;
     t.duration = doc["duration"] | 0;
     t.autoDelete = doc["autoDelete"] | false;
-    bool persist = doc["persistent"] | false;  // ← 必须在这里声明
+    bool persist = doc["persistent"] | false;  // �?必须在这里声�?
 
     if (doc.containsKey("commands")) {
       JsonDocument cmdsDoc;
@@ -537,7 +542,7 @@ static void handleTimerCommand(JsonDocument &doc) {
         te.persistent = true;
         config.timers.push_back(te);
       }
-      config.save();
+      config.markDirty();
     } else {
       Serial.printf("[TIMER] '%s' is non-persistent (not saved to NVS)\n", t.id.c_str());
     }
@@ -551,7 +556,7 @@ static void handleTimerCommand(JsonDocument &doc) {
         break;
       }
     }
-    config.save();
+    config.markDirty();
 
   } else if (action == "enable") {
     String id = doc["id"].as<String>();
@@ -563,7 +568,7 @@ static void handleTimerCommand(JsonDocument &doc) {
         break;
       }
     }
-    config.save();
+    config.markDirty();
 
   } else if (action == "reset") {
     String id = doc["id"].as<String>();
@@ -592,7 +597,7 @@ static void handleLogicCommand(JsonDocument &doc) {
     r.operator_ = doc["operator"] | String("and");
     r.enabled = doc["enabled"] | true;
     r.cooldown = doc["cooldown"] | 1000;
-    bool persist = doc["persistent"] | false;  // 新增：默认true兼容旧用法
+    bool persist = doc["persistent"] | false;  // 新增：默认true兼容旧用�?
 
     if (doc.containsKey("conditions")) {
       for (JsonObject c : doc["conditions"].as<JsonArray>()) {
@@ -678,7 +683,7 @@ static void handleLogicCommand(JsonDocument &doc) {
         }
         config.logicRules.push_back(lre);
       }
-      config.save();
+      config.markDirty();
     } else {
       Serial.printf("[LOGIC] Rule '%s' is non-persistent (not saved to NVS)\n", r.id.c_str());
     }
@@ -691,7 +696,7 @@ static void handleLogicCommand(JsonDocument &doc) {
         break;
       }
     }
-    config.save();
+    config.markDirty();
   } else if (action == "enable") {
     String id = doc["id"].as<String>();
     bool en = doc["enabled"] | true;
@@ -702,7 +707,7 @@ static void handleLogicCommand(JsonDocument &doc) {
         break;
       }
     }
-    config.save();
+    config.markDirty();
   } else if (action == "list") {
     String json = LogicEngine::toJson();
     publishResult(json);
@@ -714,7 +719,7 @@ static void handleLogicCommand(JsonDocument &doc) {
   }
 }
 
-// 主命令分发
+// 主命令分�?
 static void handleCommand(JsonDocument &doc, bool fromMqtt) {
 
 
@@ -738,7 +743,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
       if (!matchId && !matchName) {
         String cmdCheck = doc["cmd"].as<String>();
         if (cmdCheck == "forward") {
-          // 不做任何事，让代码继续往下走到 forward 处理器
+          // 不做任何事，让代码继续往下走�?forward 处理�?
         } else {
           String json;
           serializeJson(doc, json);
@@ -834,7 +839,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
       }
     }
 
-    // ===== 变量插值："$V:varname" → 数字（去掉引号） =====
+    // ===== 变量插值："$V:varname" �?数字（去掉引号） =====
     {
       int pos;
       int loopGuard = 0;
@@ -856,11 +861,11 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
                     + String((int)val)
                     + payload.substring(nameEnd - 1);
 
-          Serial.printf("[PUBLISH] Interpolated $V:%s → %d\n", varName.c_str(), (int)val);
+          Serial.printf("[PUBLISH] Interpolated $V:%s �?%d\n", varName.c_str(), (int)val);
         } else break;
       }
     }
-    // ===== 插值结束 =====
+    // ===== 插值结�?=====
     if (payload.startsWith("{")) {
       JsonDocument payloadDoc;
       if (!deserializeJson(payloadDoc, payload)) {
@@ -875,12 +880,12 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // ★★★ 新增：forward 命令 — 跨设备转发 ★★★
-  // ═══════════════════════════════════════════════════════════
-  // ═══════════════════════════════════════════════════════════
-  // ★★★ forward 命令 — 跨设备转发 ★★★
-  // ═══════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════�?
+  // ★★�?新增：forward 命令 �?跨设备转�?★★�?
+  // ══════════════════════════════════════════════════════════�?
+  // ══════════════════════════════════════════════════════════�?
+  // ★★�?forward 命令 �?跨设备转�?★★�?
+  // ══════════════════════════════════════════════════════════�?
   else if (cmd == "forward") {
     String target = doc["target"].as<String>();
     if (target.length() == 0) {
@@ -892,11 +897,11 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
       return;
     }
 
-    // 1. 序列化 payload 为字符串
+    // 1. 序列�?payload 为字符串
     String payloadStr;
     serializeJson(doc["payload"], payloadStr);
 
-    // 2. $V: 变量插值
+    // 2. $V: 变量插�?
     {
       int pos;
       int guard = 0;
@@ -918,25 +923,25 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
                        + String((int)val)
                        + payloadStr.substring(nameEnd - 1);
 
-          Serial.printf("[FWD] $V:%s → %d\n", varName.c_str(), (int)val);
+          Serial.printf("[FWD] $V:%s �?%d\n", varName.c_str(), (int)val);
         } else break;
       }
     }
 
-    // 3. 判断 target 是否是自己
+    // 3. 判断 target 是否是自�?
     String myId = getDeviceId();
     String myName = config.deviceName;
     bool isSelf = (target == myId) || (myName.length() > 0 && target == myName);
 
     if (isSelf) {
-      // ★★★ target 是自己，直接本地执行 payload ★★★
+      // ★★�?target 是自己，直接本地执行 payload ★★�?
       JsonDocument payloadDoc;
       if (!deserializeJson(payloadDoc, payloadStr)) {
         Serial.printf("[FWD] Local exec: %s\n", payloadStr.c_str());
         executeCommand(payloadDoc);
       }
     } else {
-      // ★★★ target 是其他设备，注入 target 和 _from，通过 DualChannel 发送 ★★★
+      // ★★�?target 是其他设备，注入 target �?_from，通过 DualChannel 发�?★★�?
       JsonDocument payloadDoc;
       if (!deserializeJson(payloadDoc, payloadStr)) {
         payloadDoc["target"] = target;
@@ -944,13 +949,13 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
         serializeJson(payloadDoc, payloadStr);
       }
       bool ok = DualChannel::sendToTarget(target, payloadStr);
-      Serial.printf("[FWD] → %s (%s): %s\n",
+      Serial.printf("[FWD] �?%s (%s): %s\n",
                     target.c_str(), ok ? "OK" : "FAIL", payloadStr.c_str());
     }
   }
-  // ═══════════════════════════════════════════════════════════
-  // ★★★ forward 结束 ★★★
-  // ═══════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════�?
+  // ★★�?forward 结束 ★★�?
+  // ══════════════════════════════════════════════════════════�?
 
 
   else if (cmd == "rgb") {
@@ -1014,7 +1019,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
           break;
         }
       }
-      // ★ 不管 servoList 里有没有，都强制释放 LEDC 通道
+      // �?不管 servoList 里有没有，都强制释放 LEDC 通道
       ledcDetach(pin);
       pinMode(pin, OUTPUT);
       digitalWrite(pin, LOW);
@@ -1065,7 +1070,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
                   pin, state.c_str(), medianDuration, samples);
   }
 
-  // ★ 新增：音频输出
+  // �?新增：音频输�?
   else if (cmd == "tone") {
     int pin = doc["pin"] | -1;
     if (pin < 0 || !isValidExternalPin(pin)) {
@@ -1115,8 +1120,9 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
       r.enabled = false;
     }
 
-    // 3. 清除所有引脚
-    for (int pin = 0; pin < 48; pin++) {
+    // 3. 清除所有引�?
+    for (int pi = 0; pi < validExternalPinsCount; pi++) {
+      int pin = validExternalPins[pi];
       int mode = GpioControl::getPinMode(pin);
       if (mode == OUTPUT) {
         analogWrite(pin, 0);
@@ -1125,7 +1131,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
       }
     }
 
-    // 4. 分离所有舵机
+    // 4. 分离所有舵�?
     for (int i = 0; i < servoCount; i++) {
       if (servoList[i].attached) {
         servoList[i].servo.detach();
@@ -1134,14 +1140,14 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
       }
     }
 
-    // 5. 重置 GPIO 运行时记录
+    // 5. 重置 GPIO 运行时记�?
     GpioControl::init();
 
     // 6. 原样恢复定时器状态（不改 RTC 相关的触发时间）
     for (size_t i = 0; i < TimerEngine::getList().size(); i++) {
       auto &t = TimerEngine::getList()[i];
       t.enabled = timerStates[i];
-      // 如果原来是启用的，重置执行计数让它从干净状态重新开始
+      // 如果原来是启用的，重置执行计数让它从干净状态重新开�?
       if (t.enabled) {
         t.executed = 0;
         t.lastRun = millis();
@@ -1149,11 +1155,11 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
       }
     }
 
-    // 7. 原样恢复逻辑规则状态
+    // 7. 原样恢复逻辑规则状�?
     for (size_t i = 0; i < LogicEngine::getList().size(); i++) {
       auto &r = LogicEngine::getList()[i];
       r.enabled = logicStates[i];
-      // 如果原来是启用的，重置边沿检测从干净状态重新判断
+      // 如果原来是启用的，重置边沿检测从干净状态重新判�?
       if (r.enabled) {
         r.prevCondition = false;
         r.lastTrigger = 0;
@@ -1162,7 +1168,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
 
     // 8. RTC 定时任务不动（它们触发时间没到就不会执行，和引脚状态无关）
 
-    // 9. 发布状态
+    // 9. 发布状�?
     GpioControl::publishStatus();
 
     Serial.println("[GPIO] All cleared, tasks restored to original state");
@@ -1202,7 +1208,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
       o["qos"] = t.qos;
     }
 
-    // 传感器
+    // 传感�?
     JsonArray snrs = doc["sensors"].to<JsonArray>();
     for (auto &s : config.sensors) {
       JsonObject o = snrs.add<JsonObject>();
@@ -1226,7 +1232,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
       o["persistent"] = t.persistent;
     }
 
-    // 定时器
+    // 定时�?
     JsonArray tmrs = doc["timers"].to<JsonArray>();
     for (auto &te : config.timers) {
       JsonObject o = tmrs.add<JsonObject>();
@@ -1398,7 +1404,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
     } else if (action == "set_batch_interval") {
       int interval = doc["interval"] | 0;
       config.batchInterval = interval;
-      config.save();
+      config.markDirty();
       Serial.printf("[BATCH] Interval set to %d s\n", interval);
     }
   } 
@@ -1435,7 +1441,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
     SPIBus::handleCommand(doc);
   } else if (cmd == "touch") {
     Touch::handleCommand(doc);
-  } else if (cmd == "encoder") {  // ★ 新增
+  } else if (cmd == "encoder") {  // �?新增
     Encoder::handleCommand(doc);
   }
 // ========== 新增：display 命令分发 ==========
@@ -1606,20 +1612,20 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
         delayMicroseconds(40);
         pinMode(pin, INPUT_PULLUP);
 
-        while (digitalRead(pin) == HIGH && millis() - startTime < 100) delayMicroseconds(1);
+        while (digitalRead(pin) == HIGH && millis() - startTime < 100) { delayMicroseconds(1); yield(); }
         if (millis() - startTime >= 100) {
           Serial.println("[MODULE] DHT timeout");
           return;
         }
 
-        while (digitalRead(pin) == LOW && millis() - startTime < 100) delayMicroseconds(1);
-        while (digitalRead(pin) == HIGH && millis() - startTime < 100) delayMicroseconds(1);
+        while (digitalRead(pin) == LOW && millis() - startTime < 100) { delayMicroseconds(1); yield(); }
+        while (digitalRead(pin) == HIGH && millis() - startTime < 100) { delayMicroseconds(1); yield(); }
 
         uint8_t data[5] = {0};
         for (int i = 0; i < 40; i++) {
-          while (digitalRead(pin) == LOW && millis() - startTime < 100) delayMicroseconds(1);
+          while (digitalRead(pin) == LOW && millis() - startTime < 100) { delayMicroseconds(1); yield(); }
           unsigned long t = micros();
-          while (digitalRead(pin) == HIGH && millis() - startTime < 100) delayMicroseconds(1);
+          while (digitalRead(pin) == HIGH && millis() - startTime < 100) { delayMicroseconds(1); yield(); }
           unsigned long duration = micros() - t;
           data[i / 8] = (data[i / 8] << 1) | (duration > 40 ? 1 : 0);
         }
@@ -1739,7 +1745,7 @@ static void checkSerialInput() {
         serialBuffer = "";
       }
     } else {
-      serialBuffer += c;
+      if (serialBuffer.length() < 2048) serialBuffer += c;
     }
   }
 }
@@ -1929,7 +1935,8 @@ static void handleOtaMessage(const uint8_t *payload, unsigned int length) {
 
 // MQTT 消息回调
 static void onMqttMessage(char *topic, byte *payload, unsigned int length) {
-  String msg = "";
+  String msg;
+  msg.reserve(length + 1);
   for (unsigned int i = 0; i < length; i++) {
     msg += (char)payload[i];
   }
@@ -1950,6 +1957,9 @@ static void onMqttMessage(char *topic, byte *payload, unsigned int length) {
       Serial.printf("[MQTT] Echo filtered (from self) on %s\n", topic);
       return;
     }
+    if (from.length() > 0) {
+      DualChannel::updateMqttStatus(from, true);
+    }
   }
 
   String cmd = doc["cmd"].as<String>();
@@ -1966,11 +1976,33 @@ static void onMqttMessage(char *topic, byte *payload, unsigned int length) {
   }
 }
 
+static void handleLwtMessage(byte *payload, unsigned int length) {
+  String msg;
+  msg.reserve(length + 1);
+  for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
+
+  JsonDocument doc;
+  if (deserializeJson(doc, msg)) return;
+
+  String fromId = doc["deviceId"].as<String>();
+  if (fromId.length() == 0 || fromId == getDeviceId()) return;
+
+  bool online = doc["online"].as<bool>();
+  String name = doc.containsKey("deviceName") ? doc["deviceName"].as<String>() : "";
+  DualChannel::updateMqttStatus(fromId, online, name);
+  Serial.printf("[MQTT] LWT: %s %s\n", fromId.c_str(), online ? "ONLINE" : "OFFLINE");
+}
+
 static void mqttCallback(char *topic, byte *payload, unsigned int length) {
   Serial.printf("[MQTT] Msg: %s (%u bytes)\n", topic, length);
 
   if (strcmp(topic, MQTT_OTA_TOPIC) == 0) {
     handleOtaMessage((const uint8_t *)payload, length);
+    return;
+  }
+
+  if (strcmp(topic, LWT_TOPIC) == 0) {
+    handleLwtMessage(payload, length);
     return;
   }
 
@@ -2004,7 +2036,7 @@ void loop() {
     }
     return;
   }
-  // MQTT 未连接时，允许串口命令
+  // MQTT 未连接时，允许串口命�?
   if (!mqttClient.connected()) {
     checkSerialInput();
   }
@@ -2025,7 +2057,7 @@ void loop() {
   if (mqttState == MQTT_LINKED && mqttClient.connected()) {
     mqttClient.loop();
 
-    // MQTT OTA 超时检测
+    // MQTT OTA 超时检�?
     if (mqttOtaActive && millis() - otaLastChunk > 30000) {
       Serial.println("[MQTT-OTA] Timeout - aborting");
       Update.abort();
@@ -2033,7 +2065,7 @@ void loop() {
       otaReport("timeout", 0);
     }
 
-    // 批量状态上报
+    // 批量状态上�?
     if (config.batchInterval > 0) {
       unsigned long intervalMs = (unsigned long)config.batchInterval * 1000;
       if (millis() - lastBatchReport >= intervalMs) {
@@ -2137,7 +2169,7 @@ void loop() {
           return;
         }
 
-        // SSL: 先用域名建立连接（带 SNI），再让 PubSubClient 走 MQTT
+        // SSL: 先用域名建立连接（带 SNI），再让 PubSubClient �?MQTT
         if (config.mqttSsl && !sslPreConnected) {
           Serial.printf("[MQTT-SSL] Connecting to %s:%u ...\n",
                         config.mqttHost.c_str(), config.mqttPort);
@@ -2158,13 +2190,16 @@ void loop() {
           sslPreConnected = true;
         }
 
-        // PubSubClient 检测到 socket 已连接，直接发 MQTT CONNECT
+        // PubSubClient 检测到 socket 已连接，直接�?MQTT CONNECT
         Serial.printf("[MQTT] %s %s:%u (ClientID=%s)\n",
                       config.mqttSsl ? "SSL" : "TCP",
                       config.mqttHost.c_str(),
                       config.mqttPort,
                       pendingClientId.c_str());
         Serial.printf("[MQTT] Free heap: %u bytes\n", ESP.getFreeHeap());
+
+        lwtOnlineMsg = "{\"deviceId\":\"" + getDeviceId() + "\",\"deviceName\":\"" + config.deviceName + "\",\"online\":true}";
+        lwtOfflineMsg = "{\"deviceId\":\"" + getDeviceId() + "\",\"online\":false}";
 
         bool ok = false;
         if (config.mqttUser.length() > 0) {
@@ -2173,10 +2208,10 @@ void loop() {
             pendingClientId.c_str(),
             config.mqttUser.c_str(),
             config.mqttPass.c_str(),
-            LWT_TOPIC,   // 遗嘱主题
-            1,           // QoS
-            true,        // retain
-            LWT_OFFLINE  // 遗嘱消息
+            LWT_TOPIC,
+            1,
+            true,
+            lwtOfflineMsg.c_str()
           );
 
         } else {
@@ -2184,10 +2219,10 @@ void loop() {
           ok = mqttClient.connect(
             pendingClientId.c_str(),
             NULL, NULL,
-            LWT_TOPIC,   // 遗嘱主题
-            1,           // QoS
-            true,        // retain
-            LWT_OFFLINE  // 遗嘱消息
+            LWT_TOPIC,
+            1,
+            true,
+            lwtOfflineMsg.c_str()
           );
         }
 
@@ -2203,6 +2238,12 @@ void loop() {
           }
           mqttClient.subscribe(MQTT_OTA_TOPIC, 1);
           Serial.printf("[MQTT] Sub: %s QoS1 (Reserved OTA)\n", MQTT_OTA_TOPIC);
+
+          mqttClient.subscribe(LWT_TOPIC, 1);
+          Serial.printf("[MQTT] Sub: %s QoS1 (LWT)\n", LWT_TOPIC);
+
+          mqttClient.publish(LWT_TOPIC, lwtOnlineMsg.c_str(), true);
+          Serial.printf("[MQTT] LWT online published\n");
 
           lastBatchReport = millis();
         } else {

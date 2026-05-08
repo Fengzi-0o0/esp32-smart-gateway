@@ -6,7 +6,7 @@
 
 // ========== SPI 实例管理 ==========
 // FSPI = SPI2 (port 2), HSPI = SPI3 (port 3)
-// SPI0/SPI1 为 Flash/PSRAM 专用，禁止使用
+// SPI0/SPI1 �?Flash/PSRAM 专用，禁止使�?
 
 static SPIClass *spi = nullptr;
 static int curPort = -1, curMosi = -1, curMiso = -1, curSclk = -1;
@@ -22,7 +22,7 @@ static SPIClass* ensureSPI(int port, int mosi, int miso, int sclk) {
     }
     int spiBus = (port == 3) ? HSPI : FSPI;
     spi = new SPIClass(spiBus);
-    spi->begin(sclk, miso, mosi, -1);  // CS 由用户在命令中指定
+    spi->begin(sclk, miso, mosi, -1);  // CS 由用户在命令中指�?
     curPort = port; curMosi = mosi; curMiso = miso; curSclk = sclk;
     Serial.printf("[SPI] Init port=%d(FSPI/HSPI) MOSI=%d MISO=%d SCLK=%d\n",
                   port, mosi, miso, sclk);
@@ -98,7 +98,7 @@ void handleCommand(JsonDocument &doc) {
                 se.enabled = true;
                 config.spiConfigs.push_back(se);
             }
-            config.save();
+            config.markDirty();
         }
 
         JsonDocument resp;
@@ -115,7 +115,7 @@ void handleCommand(JsonDocument &doc) {
         if (MqttClient::isConnected() && config.pubTopics.size() > 0)
             MqttClient::publish(config.pubTopics[0].topic, p);
 
-    // ---- write: 写入字节 (带 CS) ----
+    // ---- write: 写入字节 (�?CS) ----
     } else if (action == "write") {
         int port  = doc["port"]  | 2;
         int mosi  = doc["mosi"]  | -1;
@@ -151,7 +151,7 @@ void handleCommand(JsonDocument &doc) {
 
         Serial.printf("[SPI] Write port=%d cs=%d %d bytes\n", port, cs, i);
 
-    // ---- read: 读取字节 (带 CS) ----
+    // ---- read: 读取字节 (�?CS) ----
     } else if (action == "read") {
         int port  = doc["port"]  | 2;
         int mosi  = doc["mosi"]  | -1;
@@ -171,7 +171,7 @@ void handleCommand(JsonDocument &doc) {
         SPIClass *s = ensureSPI(port, mosi, miso, sclk);
         uint8_t txBuf[512];
         uint8_t rxBuf[512];
-        memset(txBuf, 0xFF, count);  // 发送 0xFF 作为 dummy
+        memset(txBuf, 0xFF, count);  // 发�?0xFF 作为 dummy
 
         pinMode(cs, OUTPUT);
         digitalWrite(cs, HIGH);
@@ -195,7 +195,7 @@ void handleCommand(JsonDocument &doc) {
             MqttClient::publish(config.pubTopics[0].topic, p);
         Serial.printf("[SPI] Read port=%d cs=%d %d bytes\n", port, cs, count);
 
-    // ---- transfer: 全双工读写 (带 CS) ----
+    // ---- transfer: 全双工读�?(�?CS) ----
     } else if (action == "transfer") {
         int port  = doc["port"]  | 2;
         int mosi  = doc["mosi"]  | -1;
@@ -257,7 +257,7 @@ void handleCommand(JsonDocument &doc) {
             Serial.println("[SPI] Bus released");
         }
         for (auto it = config.spiConfigs.begin(); it != config.spiConfigs.end(); ++it) {
-            config.spiConfigs.erase(it); config.save(); break;
+            config.spiConfigs.erase(it); config.markDirty(); break;
         }
 
     // ---- list: 列出配置 ----

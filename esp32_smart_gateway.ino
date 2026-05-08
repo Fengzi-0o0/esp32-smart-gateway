@@ -22,7 +22,7 @@
 
 
 
-const char *OTA_VERIFY_TAG = "预设修复";
+const char *OTA_VERIFY_TAG = "预设修复3";
 
 
 WebServer server(80);
@@ -104,38 +104,6 @@ void setup() {
   wdtInit();
 
   config.load();
-  // 恢复持久化定时器
-  for (auto &te : config.timers) {
-    if (!te.persistent) continue;
-    TimerTask t;
-    t.id = te.id;
-    t.type = te.type;
-    t.interval = te.interval;
-    t.count = te.count;
-    t.enabled = te.enabled;
-    t.commandsJson = te.commandsJson;
-    TimerEngine::add(t);
-  }
-
-  // 恢复持久化逻辑规则
-  for (auto &lre : config.logicRules) {
-    if (!lre.persistent) continue;
-    LogicRule r;
-    r.id = lre.id;
-    r.operator_ = lre.operator_;
-    r.enabled = lre.enabled;
-    r.cooldown = lre.cooldown;
-    r.actionsJson = lre.actionsJson;
-    for (auto &ce : lre.conditions) {
-      SimpleCondition sc;
-      sc.source = ce.source;
-      sc.pin = ce.pin;
-      sc.op = ce.op;
-      sc.value = ce.value;
-      r.conditions.push_back(sc);
-    }
-    LogicEngine::add(r);
-  }
 
   GpioControl::init();
   TimerEngine::init();
@@ -153,8 +121,8 @@ void setup() {
   WebServerManager::init();
   MqttClient::init();
 
-  // 恢复定时器到引擎
   for (auto &te : config.timers) {
+    if (!te.persistent) continue;
     TimerTask t;
     t.id = te.id;
     t.type = te.type;
@@ -166,8 +134,8 @@ void setup() {
   }
   Serial.printf("[MAIN] Restored %d timers from NVS\n", config.timers.size());
 
-  // 恢复逻辑规则到引擎
   for (auto &lre : config.logicRules) {
+    if (!lre.persistent) continue;
     LogicRule r;
     r.id = lre.id;
     r.operator_ = lre.operator_;
@@ -218,12 +186,13 @@ void setup() {
 void loop() {
   wdtFeed();  // 喂狗
 
-  // OTA 期间暂停看门狗，避免 Flash 写入耗时触发重启
   if (otaInProgress) {
     wdtPause();
   } else {
     wdtResume();
   }
+
+  config.saveIfDirty();
 
   WifiManager::loop();
   WebServerManager::loop();

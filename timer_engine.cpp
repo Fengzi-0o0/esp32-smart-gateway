@@ -21,7 +21,7 @@ void loop() {
     TimerTask &t = timers[i];
     if (!t.enabled) continue;
 
-    // 检查运行时长限制
+    // 检查运行时长限�?
     if (t.duration > 0 && (now - t.startTime >= t.duration)) {
       t.enabled = false;
       Serial.printf("[TIMER] '%s' duration expired (%lu ms)\n", t.id.c_str(), t.duration);
@@ -32,7 +32,7 @@ void loop() {
         for (auto it = config.timers.begin(); it != config.timers.end(); ++it) {
           if (it->id == t.id) {
             config.timers.erase(it);
-            config.save();
+            config.markDirty();
             break;
           }
         }
@@ -41,7 +41,7 @@ void loop() {
       continue;
     }
 
-    // 检查执行次数
+    // 检查执行次�?
     if (t.type == "once" && t.executed >= 1) continue;
     if (t.type == "count" && t.count > 0 && t.executed >= t.count) {
       t.enabled = false;
@@ -52,7 +52,7 @@ void loop() {
         for (auto it = config.timers.begin(); it != config.timers.end(); ++it) {
           if (it->id == t.id) {
             config.timers.erase(it);
-            config.save();
+            config.markDirty();
             break;
           }
         }
@@ -65,7 +65,7 @@ void loop() {
       t.lastRun = now;
       t.executed++;
 
-      // 解析并执行 commandsJson 中的命令
+      // 解析并执�?commandsJson 中的命令
       JsonDocument cmdDoc;
       DeserializationError err = deserializeJson(cmdDoc, t.commandsJson);
       if (!err) {
@@ -94,7 +94,7 @@ void loop() {
 }
 
 void add(const TimerTask &t) {
-  // 先检查是否已存在同 ID
+  // 先检查是否已存在�?ID
   for (auto &existing : timers) {
     if (existing.id == t.id) {
       existing = t;
@@ -176,7 +176,7 @@ String toJson() {
     o["enabled"] = t.enabled;
     o["duration"] = t.duration;
     o["autoDelete"] = t.autoDelete;
-    // 解析 commandsJson 以验证格式
+    // 解析 commandsJson 以验证格�?
     JsonDocument cmds;
     if (!deserializeJson(cmds, t.commandsJson)) {
       o["commands"] = cmds;

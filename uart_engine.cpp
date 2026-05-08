@@ -10,7 +10,7 @@ static bool uart2Active = false;
 static bool uart1Listening = false;
 static bool uart2Listening = false;
 
-// ========== 串口配置字构建 ==========
+// ========== 串口配置字构�?==========
 // parity: 0=none, 1=even, 2=odd
 // dataBits: 5,6,7,8   stopBits: 1,2
 
@@ -75,7 +75,7 @@ static void publishUartData(int port, const uint8_t *data, int len) {
         MqttClient::publish(config.pubTopics[0].topic, p);
 }
 
-// ========== 初始化：恢复持久化配置 ==========
+// ========== 初始化：恢复持久化配�?==========
 
 void init() {
     uart1Active = false;
@@ -83,7 +83,7 @@ void init() {
     uart1Listening = false;
     uart2Listening = false;
 
-    // 从 NVS 恢复持久化 UART 配置
+    // �?NVS 恢复持久�?UART 配置
     for (auto &ue : config.uartConfigs) {
         if (!ue.enabled) continue;
         uint32_t cfg = buildConfig(ue.dataBits, ue.parity, ue.stopBits);
@@ -148,7 +148,7 @@ void handleCommand(JsonDocument &doc) {
     String action = doc["action"].as<String>();
     int port = doc["port"] | 1;
 
-    // ---- config: 配置并启动串口 ----
+    // ---- config: 配置并启动串�?----
     if (action == "config") {
         if (port != 1 && port != 2) {
             Serial.println("[UART] port must be 1 or 2");
@@ -193,7 +193,7 @@ void handleCommand(JsonDocument &doc) {
                       stopBits,
                       listen ? "(listening)" : "");
 
-        // 持久化
+        // 持久�?
         if (persist) {
             bool found = false;
             for (auto &e : config.uartConfigs) {
@@ -211,7 +211,7 @@ void handleCommand(JsonDocument &doc) {
                 ue.parity = parity; ue.enabled = true; ue.listening = listen;
                 config.uartConfigs.push_back(ue);
             }
-            config.save();
+            config.markDirty();
         }
 
         JsonDocument resp;
@@ -244,7 +244,7 @@ void handleCommand(JsonDocument &doc) {
             Serial.printf("[UART] Port %d not active\n", port);
         }
 
-    // ---- write_bytes: 发送字节数组 ----
+    // ---- write_bytes: 发送字节数�?----
     } else if (action == "write_bytes") {
         if (!doc.containsKey("data")) { Serial.println("[UART] write_bytes: data array required"); return; }
         JsonArray arr = doc["data"].as<JsonArray>();
@@ -264,7 +264,7 @@ void handleCommand(JsonDocument &doc) {
             Serial.printf("[UART] Port %d not active\n", port);
         }
 
-    // ---- write_hex: 发送 Hex 字符串 ----
+    // ---- write_hex: 发�?Hex 字符�?----
     } else if (action == "write_hex") {
         String hex = doc["hex"].as<String>();
         if (hex.length() == 0) { Serial.println("[UART] write_hex: hex required"); return; }
@@ -280,7 +280,7 @@ void handleCommand(JsonDocument &doc) {
             Serial.printf("[UART] Port %d not active\n", port);
         }
 
-    // ---- read: 读取当前缓冲区数据 ----
+    // ---- read: 读取当前缓冲区数�?----
     } else if (action == "read") {
         HardwareSerial *serial = (port == 1) ? &Serial1 : &Serial2;
         bool active = (port == 1) ? uart1Active : uart2Active;
@@ -314,13 +314,13 @@ void handleCommand(JsonDocument &doc) {
                 MqttClient::publish(config.pubTopics[0].topic, p);
         }
 
-    // ---- listen_start: 开启监听 ----
+    // ---- listen_start: 开启监�?----
     } else if (action == "listen_start") {
         if (port == 1) { uart1Listening = true; Serial.println("[UART1] Listening started"); }
         else if (port == 2) { uart2Listening = true; Serial.println("[UART2] Listening started"); }
         // 更新 NVS
         for (auto &e : config.uartConfigs) {
-            if (e.port == port) { e.listening = true; config.save(); break; }
+            if (e.port == port) { e.listening = true; config.markDirty(); break; }
         }
 
     // ---- listen_stop: 停止监听 ----
@@ -328,7 +328,7 @@ void handleCommand(JsonDocument &doc) {
         if (port == 1) { uart1Listening = false; Serial.println("[UART1] Listening stopped"); }
         else if (port == 2) { uart2Listening = false; Serial.println("[UART2] Listening stopped"); }
         for (auto &e : config.uartConfigs) {
-            if (e.port == port) { e.listening = false; config.save(); break; }
+            if (e.port == port) { e.listening = false; config.markDirty(); break; }
         }
 
     // ---- close: 关闭串口 ----
@@ -341,7 +341,7 @@ void handleCommand(JsonDocument &doc) {
             Serial.println("[UART2] Closed");
         }
         for (auto it = config.uartConfigs.begin(); it != config.uartConfigs.end(); ++it) {
-            if (it->port == port) { config.uartConfigs.erase(it); config.save(); break; }
+            if (it->port == port) { config.uartConfigs.erase(it); config.markDirty(); break; }
         }
 
     // ---- list: 列出配置 ----

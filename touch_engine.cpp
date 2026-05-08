@@ -5,15 +5,15 @@
 #include "script_engine.h"
 
 
-// ========== 运行时触摸状态 ==========
+// ========== 运行时触摸状�?==========
 struct TouchState {
   int pin;
   int threshold;
   int debounceMs;
   bool enabled;
   String label;
-  bool touched;      // 当前是否被触摸
-  bool prevTouched;  // 上一次状态
+  bool touched;      // 当前是否被触�?
+  bool prevTouched;  // 上一次状�?
   unsigned long lastChange;
   int rawValue;
 };
@@ -23,9 +23,9 @@ static TouchState touchStates[MAX_TOUCH_STATES];
 static int tsCount = 0;
 
 static unsigned long lastCheck = 0;
-static const unsigned long CHECK_INTERVAL = 50;  // 每 50ms 检查一次
+static const unsigned long CHECK_INTERVAL = 50;  // �?50ms 检查一�?
 
-// ========== 查找运行时状态 ==========
+// ========== 查找运行时状�?==========
 static TouchState *findTouchState(int pin) {
   for (int i = 0; i < tsCount; i++) {
     if (touchStates[i].pin == pin) return &touchStates[i];
@@ -33,7 +33,7 @@ static TouchState *findTouchState(int pin) {
   return nullptr;
 }
 
-// ========== 添加触摸引脚到监控 ==========
+// ========== 添加触摸引脚到监�?==========
 static TouchState *addTouchState(int pin, int threshold, int debounceMs,
                                  bool enabled, const String &label) {
   // 先检查是否已存在
@@ -69,7 +69,7 @@ static void publishTouchEvent(const TouchState &ts, const char *event) {
   doc["type"] = "touch_event";
   doc["deviceId"] = getDeviceId();
   doc["pin"] = ts.pin;
-  doc["event"] = event;  // "touch_down" 或 "touch_up"
+  doc["event"] = event;  // "touch_down" �?"touch_up"
   doc["raw"] = ts.rawValue;
   doc["threshold"] = ts.threshold;
   doc["label"] = ts.label;
@@ -82,13 +82,13 @@ static void publishTouchEvent(const TouchState &ts, const char *event) {
 
 namespace Touch {
 
-// ========== 初始化：恢复持久化配置 ==========
+// ========== 初始化：恢复持久化配�?==========
 
 void init() {
   tsCount = 0;
   lastCheck = 0;
 
-  // 从 NVS 恢复持久化触摸引脚
+  // �?NVS 恢复持久化触摸引�?
   for (auto &te : config.touchPins) {
     if (!te.enabled || !te.persistent) continue;
     // 验证引脚支持触摸
@@ -104,7 +104,7 @@ void init() {
   Serial.printf("[TOUCH] Engine initialized (%d pins)\n", tsCount);
 }
 
-// ========== 主循环：触摸检测 ==========
+// ========== 主循环：触摸检�?==========
 
 void loop() {
   unsigned long now = millis();
@@ -168,7 +168,7 @@ void handleCommand(JsonDocument &doc) {
         delay(5);
       }
       int avg = sum / 50;
-      threshold = avg * 70 / 100;  // 70% 作为阈值
+      threshold = avg * 70 / 100;  // 70% 作为阈�?
       Serial.printf("[TOUCH] Auto-calibrated pin %d: avg=%d threshold=%d\n",
                     pin, avg, threshold);
     }
@@ -177,7 +177,7 @@ void handleCommand(JsonDocument &doc) {
     Serial.printf("[TOUCH] Added pin=%d threshold=%d debounce=%d label=%s\n",
                   pin, threshold, debounceMs, label.c_str());
 
-    // 持久化
+    // 持久�?
     if (persist) {
       bool found = false;
       for (auto &te : config.touchPins) {
@@ -201,7 +201,7 @@ void handleCommand(JsonDocument &doc) {
         te.persistent = true;
         config.touchPins.push_back(te);
       }
-      config.save();
+      config.markDirty();
     }
 
     JsonDocument resp;
@@ -237,12 +237,12 @@ void handleCommand(JsonDocument &doc) {
       if (it->pin == pin) {
         bool wasPersistent = it->persistent;
         config.touchPins.erase(it);
-        if (wasPersistent) config.save();
+        if (wasPersistent) config.markDirty();
         break;
       }
     }
 
-    // ---- read: 读取当前触摸值 ----
+    // ---- read: 读取当前触摸�?----
   } else if (action == "read") {
     int pin = doc["pin"] | -1;
     if (pin < 0) {
@@ -275,7 +275,7 @@ void handleCommand(JsonDocument &doc) {
       MqttClient::publish(config.pubTopics[0].topic, p);
     Serial.printf("[TOUCH] Read pin=%d raw=%d\n", pin, raw);
 
-    // ---- calibrate: 校准阈值 ----
+    // ---- calibrate: 校准阈�?----
   } else if (action == "calibrate") {
     int pin = doc["pin"] | -1;
     int samples = doc["samples"] | 100;
@@ -298,7 +298,7 @@ void handleCommand(JsonDocument &doc) {
     int avg = sum / samples;
     int thresh = avg * 70 / 100;
 
-    // 更新运行时状态
+    // 更新运行时状�?
     TouchState *ts = findTouchState(pin);
     if (ts) ts->threshold = thresh;
 
@@ -306,7 +306,7 @@ void handleCommand(JsonDocument &doc) {
     for (auto &te : config.touchPins) {
       if (te.pin == pin) {
         te.threshold = thresh;
-        config.save();
+        config.markDirty();
         break;
       }
     }
@@ -342,13 +342,13 @@ void handleCommand(JsonDocument &doc) {
     for (auto &te : config.touchPins) {
       if (te.pin == pin) {
         te.enabled = en;
-        if (te.persistent) config.save();
+        if (te.persistent) config.markDirty();
         break;
       }
     }
     Serial.printf("[TOUCH] Pin %d %s\n", pin, en ? "enabled" : "disabled");
 
-    // ---- list: 列出所有触摸引脚 ----
+    // ---- list: 列出所有触摸引�?----
   } else if (action == "list") {
     JsonDocument resp;
     resp["type"] = "touch_list";
@@ -370,7 +370,7 @@ void handleCommand(JsonDocument &doc) {
       MqttClient::publish(config.pubTopics[0].topic, p);
     Serial.println("[TOUCH] List published");
 
-    // ---- read_all: 一次性读取所有引脚 ----
+    // ---- read_all: 一次性读取所有引�?----
   } else if (action == "read_all") {
     JsonDocument resp;
     resp["type"] = "touch_read_all";

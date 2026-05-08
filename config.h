@@ -20,7 +20,7 @@
 #define MAX_UART_PORTS      2
 #define MAX_SPI_PORTS       2
 #define MAX_TOUCH_PINS      10
-#define FIRMWARE_VERSION    "1.0.1fix31"  // 版本号更新
+#define FIRMWARE_VERSION    "1.0.1fix33"  // 版本号更新
 #define UDP_DISCOVERY_PORT  4210
 #define OTA_CHUNK_SIZE      1024
 
@@ -168,9 +168,12 @@ struct DeviceConfig {
 
 
     int    batchInterval;  // 新增: 批量上报间隔秒, 0=禁用
+    bool   _dirty;         // 脏标记：true=有未保存的修改
 
     void load();
     void save();
+    void markDirty() { _dirty = true; }
+    void saveIfDirty() { if (_dirty) { save(); _dirty = false; } }
     void reset();
 };
 

@@ -10,13 +10,15 @@
 #define DC_MAX_RETRIES       3
 #define DC_DISCOVER_MS   30000
 #define DC_DEVICE_TIMEOUT 120000
+#define DC_MQTT_HEARTBEAT_MS 60000
 
 struct DeviceEntry {
     String deviceId;
     String deviceName;
     String ip;
     uint16_t port;
-    unsigned long lastSeen;
+    unsigned long lastLanSeen;
+    unsigned long lastMqttSeen;
     bool lanOnline;
     bool mqttOnline;
 };
@@ -44,7 +46,7 @@ namespace DualChannel {
 
     void registerDevice(const String &id, const String &name,
                         const String &ip, uint16_t port);
-    void updateMqttStatus(const String &id, bool online);
+    void updateMqttStatus(const String &id, bool online, const String &name = "");
     DeviceEntry* findDevice(const String &query);
     int  getDeviceCount();
 
