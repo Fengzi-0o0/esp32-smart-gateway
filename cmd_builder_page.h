@@ -47,6 +47,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
 .canvas-empty{display:flex;align-items:center;justify-content:center;flex:1;color:var(--muted);font-size:12px;text-align:center;padding:30px}
 .block{border-radius:8px;border:1px solid var(--border);border-left:3px solid var(--border);transition:.15s;overflow:hidden;flex-shrink:0}
 .block.selected{border-color:var(--cyan);box-shadow:0 0 10px rgba(0,212,255,.1)}
+.block.executing{border-color:var(--amber);box-shadow:0 0 14px rgba(245,158,11,.25)}
+.block.executing .block-header{background:rgba(245,158,11,.12) !important}
 .block-header{display:flex;align-items:center;gap:6px;padding:7px 10px;cursor:pointer;user-select:none}
 .block-header .icon{font-size:13px;flex-shrink:0}
 .block-header .name{font-size:11px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -108,15 +110,6 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
 .modal-item:hover{border-color:var(--cyan);background:rgba(0,212,255,.06)}
 .modal-close{width:100%;padding:8px;margin-top:10px;border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:6px;cursor:pointer;font-size:11px;font-family:inherit}
 .raw-textarea{width:100%;min-height:100px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--cyan);font-size:12px;font-family:'JetBrains Mono',monospace;outline:none;resize:vertical}
-.preset-save-bar{padding:8px;margin-bottom:6px;border-radius:6px;border:1px dashed var(--green);background:rgba(16,185,129,.06);cursor:pointer;text-align:center;font-size:11px;color:var(--green);font-weight:600;transition:.15s}
-.preset-save-bar:hover{background:rgba(16,185,129,.12);border-color:var(--green)}
-.preset-item{padding:7px 8px;margin-bottom:3px;border-radius:6px;font-size:11px;border:1px solid var(--border);transition:.15s;display:flex;align-items:center;gap:5px;background:var(--card)}
-.preset-item:hover{border-color:#fbbf24;background:rgba(251,191,36,.04)}
-.preset-item .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
-.preset-item .name:hover{color:#fbbf24}
-.preset-del{width:18px;height:18px;border-radius:3px;border:1px solid var(--border);background:none;color:var(--muted);font-size:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.15s;flex-shrink:0}
-.preset-del:hover{border-color:var(--red);color:var(--red)}
-.preset-section-title{padding:6px 8px;font-size:9px;color:var(--muted);font-weight:600;letter-spacing:1px;text-transform:uppercase}
 .btn-spin{animation:spinOnce .6s ease}
 @keyframes spinOnce{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 .toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);padding:8px 18px;border-radius:6px;font-size:11px;font-weight:600;z-index:9999;opacity:0;transition:opacity .3s,transform .3s;pointer-events:none}
@@ -125,6 +118,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
 .toast-ok{background:rgba(16,185,129,.15);border:1px solid var(--green);color:var(--green)}
 .toast-err{background:rgba(239,68,68,.15);border:1px solid var(--red);color:var(--red)}
 .toast-info{background:rgba(0,212,255,.12);border:1px solid var(--cyan);color:var(--cyan)}
+.btn-loop-active{background:var(--red) !important;color:#fff !important;border-color:var(--red) !important;font-weight:700;animation:pulseStop 1.5s ease infinite}
+@keyframes pulseStop{0%,100%{opacity:1}50%{opacity:.7}}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:var(--bg)}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
@@ -169,6 +164,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
       <option value="loop" id="optLoop">Loop</option>
       <option value="step" id="optStep">Step</option>
       <option value="sequential" id="optSeq">Sequential</option>
+      <option value="seqloop" id="optSeqLoop">SeqLoop</option>
     </select>
   </div>
 
@@ -212,7 +208,6 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
    ============================================================ */
 var GPIO_PINS = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,38,39,40,41,42,43,44,45,46,47,48];
 var TOUCH_PINS = [1,2,3,4,5,6,7,8,9,10,11,12,13,14];
-
 var CATEGORIES = [
   { id:"gpio",     icon:"\uD83D\uDCA1", zh:"GPIO",     en:"GPIO" },
   { id:"sensor",   icon:"\uD83D\uDCCA", zh:"\u4F20\u611F\u5668",   en:"Sensor" },
@@ -626,10 +621,12 @@ var cachedDevices = [];
 var websocket = null;
 var websocketConnected = false;
 var language = localStorage.getItem("lang") || "zh";
-var presets = [];
 var panelMode = "json";
 var loopTimer = null;
 var stepIndex = 0;
+var loopIteration = 0;
+var seqLoopTimer = null;
+
 
 function translate(zh, en) { return language === "zh" ? zh : en; }
 function escapeHtml(s) { return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
@@ -835,8 +832,44 @@ function updateField(blockId, key, value) {
   updateJsonPreview();
 }
 
+function highlightBlock(id) {
+  clearAllHighlights();
+  var el = document.getElementById('block-' + id);
+  if (el) {
+    el.classList.add('executing');
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
+function clearAllHighlights() {
+  var els = document.querySelectorAll('.block.executing');
+  for (var i = 0; i < els.length; i++) els[i].classList.remove('executing');
+}
+
+function flashAllBlocks() {
+  var els = document.querySelectorAll('.block');
+  for (var i = 0; i < els.length; i++) els[i].classList.add('executing');
+  setTimeout(clearAllHighlights, 350);
+}
+
+function updateSendButton(isLoopRunning) {
+  var btn = document.getElementById('btnSend');
+  if (!btn) return;
+  if (isLoopRunning) {
+    btn.textContent = translate('\u23F9 \u505C\u6B62\u5FAA\u73AF', '\u23F9 Stop Loop');
+    btn.className = 'btn btn-loop-active';
+  } else {
+    btn.textContent = translate('\u53D1\u9001', 'Send');
+    btn.className = 'btn btn-primary';
+  }
+}
+
+
 function clearCanvas() {
   stopLoop();
+  stopSeqLoop();  
+  clearAllHighlights();
+  stepIndex = 0;
   blockTree = [];
   selectedBlockId = null;
   stepIndex = 0;
@@ -844,6 +877,7 @@ function clearCanvas() {
   updateJsonPreview();
   addLogMessage(translate("\u5DF2\u6E05\u7A7A","Cleared"), "ok");
 }
+
 
 
 /* ============================================================
@@ -870,7 +904,25 @@ function renderPalette() {
   var listHtml = "";
   var count = 0;
 
-  if (activeCategory === "condition") {
+  if (activeCategory === "preset") {
+    listHtml += '<div style="padding:8px">';
+    listHtml += '<div style="margin-bottom:8px;font-size:11px;color:var(--muted);text-align:center">';
+    listHtml += translate('\u5C06\u5F53\u524D\u753B\u5E03\u5BFC\u51FA\u4E3A\u6587\u4EF6\uFF0C\u6216\u4ECE\u6587\u4EF6\u5BFC\u5165\u9884\u8BBE\u5230\u753B\u5E03', 'Export canvas to file, or import preset from file to canvas');
+    listHtml += '</div>';
+    listHtml += '<button class="btn btn-primary" style="width:100%;margin-bottom:6px;font-size:11px;padding:8px" onclick="exportPresets()">';
+    listHtml += '\u2B07 ' + translate('\u5BFC\u51FA\u5F53\u524D\u753B\u5E03', 'Export Canvas');
+    listHtml += '</button>';
+    listHtml += '<button class="btn" style="width:100%;font-size:11px;padding:8px;border-color:var(--amber);color:var(--amber)" onclick="document.getElementById(\'importFileInput\').click()">';
+    listHtml += '\u2B06 ' + translate('\u4ECE\u6587\u4EF6\u5BFC\u5165', 'Import from File');
+    listHtml += '</button>';
+    listHtml += '<input type="file" id="importFileInput" accept=".json" style="display:none" onchange="handleImportFile(this)">';
+    listHtml += '</div>';
+    count = blockTree.length;
+  }
+  else if (activeCategory === "condition") {
+
+
+ 
     for (var key in CONDITION_DEFS) {
       if (!CONDITION_DEFS.hasOwnProperty(key)) continue;
       var def = CONDITION_DEFS[key];
@@ -966,7 +1018,7 @@ function renderBlock(block, isChild) {
   var icon = getCategoryIcon(category);
   var isSelected = block.id === selectedBlockId;
 
-  var html = '<div class="block block-' + category + (isSelected ? ' selected' : '') + '">';
+  var html = '<div id="block-' + block.id + '" class="block block-' + category + (isSelected ? ' selected' : '') + '">';
   html += '<div class="block-header" onclick="selectBlock(' + block.id + ')">';
   html += '<span class="icon">' + icon + '</span>';
   html += '<span class="name">' + escapeHtml(label) + '</span>';
@@ -1135,7 +1187,7 @@ function showChildPicker(parentId, slotKey, accepts) {
   } else {
     for (var ci = 0; ci < CATEGORIES.length; ci++) {
       var cat = CATEGORIES[ci];
-      if (cat.id === "condition" || cat.id === "preset") continue;
+      if (cat.id === "condition") continue;
       var items = [];
       for (var blockType in BLOCK_DEFS) {
         if (BLOCK_DEFS[blockType].cat === cat.id) items.push(blockType);
@@ -1157,10 +1209,10 @@ function showRawModal() {
   var html = '<div class="modal-title">' + translate('\u539F\u59CB JSON','Raw JSON') + '</div>';
   html += '<textarea class="raw-textarea" id="rawInput" placeholder=\'{"cmd":"set","pin":12,"value":1}\'></textarea>';
   html += '<button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="sendRawJson()">' + translate('\u53D1\u9001','Send') + '</button>';
-  html += '<button class="btn" style="width:100%;margin-top:4px" onclick="doSaveRawAsPreset()">' + translate('\u4FDD\u5B58\u4E3A\u9884\u8BBE','Save as Preset') + '</button>';
   html += '<button class="modal-close" onclick="hideModal()">' + translate('\u5173\u95ED','Close') + '</button>';
   showModal(html);
 }
+
 
 function sendRawJson() {
   var textarea = document.getElementById("rawInput");
@@ -1279,16 +1331,44 @@ function updateJsonPreview() {
   if (el) el.textContent = json ? JSON.stringify(json, null, 2) : translate("\u7A7A","Empty");
 }
 
+function onModeChange() {
+  var mode = document.getElementById("sendMode").value;
+  var delayGroup = document.getElementById("sendDelay").parentElement;
+  if (mode === "batch") {
+    delayGroup.style.display = "none";
+  } else {
+    delayGroup.style.display = "";
+  }
+  stopLoop();
+}
+
+
 /* ============================================================
    SEND
    ============================================================ */
 function stopLoop() {
+  stopSeqLoop();
   if (loopTimer !== null) {
     clearInterval(loopTimer);
     loopTimer = null;
-    addLogMessage(translate("循环已停止","Loop stopped"), "ok");
+    loopIteration = 0;
+    clearAllHighlights();
+    updateSendButton(false);
+    addLogMessage(translate("\u5FAA\u73AF\u5DF2\u505C\u6B62","Loop stopped"), "ok");
   }
 }
+
+function stopSeqLoop() {
+  if (seqLoopTimer !== null) {
+    clearTimeout(seqLoopTimer);
+    seqLoopTimer = null;
+    loopIteration = 0;
+    clearAllHighlights();
+    updateSendButton(false);
+    addLogMessage(translate("\u987A\u5E8F\u5FAA\u73AF\u5DF2\u505C\u6B62","SeqLoop stopped"), "ok");
+  }
+}
+
 
 function sendAll() {
   var json = buildFinalJson();
@@ -1298,23 +1378,13 @@ function sendAll() {
 
   if (mode === "batch") {
     stopLoop();
+    clearAllHighlights();
     websocketSend(json);
-  }
-  else if (mode === "loop") {
-    if (loopTimer !== null) {
-      stopLoop();
-      return;
-    }
-    websocketSend(json);
-    loopTimer = setInterval(function() {
-      var again = buildFinalJson();
-      if (again) websocketSend(again);
-    }, delayMs);
-    addLogMessage(translate("循环已启动，间隔 ","Loop started, interval ") + delayMs + "ms", "ok");
   }
   else if (mode === "step") {
     stopLoop();
-    if (stepIndex >= blockTree.length) stepIndex = 0;
+    if (stepIndex >= blockTree.length) { stepIndex = 0; clearAllHighlights(); }
+    highlightBlock(blockTree[stepIndex].id);
     var blockJson = blockToJson(blockTree[stepIndex]);
     if (blockJson) {
       var def = getBlockDef(blockTree[stepIndex].type);
@@ -1323,19 +1393,108 @@ function sendAll() {
       websocketSend(blockJson);
     }
     stepIndex++;
+    if (stepIndex >= blockTree.length) {
+      addLogMessage(translate("\u6240\u6709\u6B65\u9AA4\u5DF2\u6267\u884C\u5B8C\u6BD5","All steps completed"), "ok");
+      setTimeout(clearAllHighlights, 800);
+    }
+  }
+  else if (mode === "loop") {
+    if (loopTimer !== null) {
+      stopLoop();
+      return;
+    }
+    loopIteration = 0;
+    updateSendButton(true);
+    flashAllBlocks();
+    websocketSend(json);
+    addLogMessage(translate("\u5FAA\u73AF\u5DF2\u542F\u52A8\uFF0C\u95F4\u9694 ","Loop started, interval ") + delayMs + "ms", "ok");
+    loopTimer = setInterval(function() {
+      loopIteration++;
+      flashAllBlocks();
+      var again = buildFinalJson();
+      if (again) {
+        websocketSend(again);
+        addLogMessage(translate("\u5FAA\u73AF #","Loop #") + loopIteration, "sent");
+      }
+    }, delayMs);
   }
   else if (mode === "sequential") {
     stopLoop();
-    for (var i = 0; i < blockTree.length; i++) {
+    var total = blockTree.length;
+    for (var i = 0; i < total; i++) {
       (function(index) {
         setTimeout(function() {
+          highlightBlock(blockTree[index].id);
+          var def = getBlockDef(blockTree[index].type);
+          var label = def ? (language === "zh" ? def.zh : def.en) : blockTree[index].type;
+          addLogMessage("Seq " + (index + 1) + "/" + total + ": " + label, "sent");
           var blockJson = blockToJson(blockTree[index]);
           if (blockJson) websocketSend(blockJson);
+          if (index === total - 1) {
+            addLogMessage(translate("\u987A\u5E8F\u6267\u884C\u5B8C\u6BD5","Sequential completed"), "ok");
+            setTimeout(clearAllHighlights, 600);
+          }
         }, index * delayMs);
       })(i);
     }
   }
+    else if (mode === "sequential") {
+    stopLoop();
+    stopSeqLoop();
+    var total = blockTree.length;
+    for (var i = 0; i < total; i++) {
+      (function(index) {
+        setTimeout(function() {
+          highlightBlock(blockTree[index].id);
+          var def = getBlockDef(blockTree[index].type);
+          var label = def ? (language === "zh" ? def.zh : def.en) : blockTree[index].type;
+          addLogMessage("Seq " + (index + 1) + "/" + total + ": " + label, "sent");
+          var blockJson = blockToJson(blockTree[index]);
+          if (blockJson) websocketSend(blockJson);
+          if (index === total - 1) {
+            addLogMessage(translate("\u987A\u5E8F\u6267\u884C\u5B8C\u6BD5","Sequential completed"), "ok");
+            setTimeout(clearAllHighlights, 600);
+          }
+        }, index * delayMs);
+      })(i);
+    }
+  }
+
+  /* ▼▼▼ 新增：SeqLoop — 逐条顺序循环 ▼▼▼ */
+  else if (mode === "seqloop") {
+    if (seqLoopTimer !== null) {
+      stopSeqLoop();
+      return;
+    }
+    if (blockTree.length === 0) return;
+    loopIteration = 0;
+    updateSendButton(true);
+    sendNextSeqLoop(0, delayMs);
+  }
+  /* ▲▲▲ 新增结束 ▲▲▲ */
 }
+
+function sendNextSeqLoop(index, delayMs) {
+  if (index >= blockTree.length) {
+    index = 0;
+    loopIteration++;
+    addLogMessage(translate("\u7B2C ","#") + loopIteration + translate(" \u8F6E\u5FAA\u73AF\u5B8C\u6210"," loop round done"), "ok");
+  }
+  highlightBlock(blockTree[index].id);
+  var def = getBlockDef(blockTree[index].type);
+  var label = def ? (language === "zh" ? def.zh : def.en) : blockTree[index].type;
+  var round = loopIteration + 1;
+  addLogMessage("SL " + round + "." + (index + 1) + "/" + blockTree.length + ": " + label, "sent");
+  var blockJson = blockToJson(blockTree[index]);
+  if (blockJson) websocketSend(blockJson);
+
+  var nextIndex = index + 1;
+  seqLoopTimer = setTimeout(function() {
+    seqLoopTimer = null;
+    sendNextSeqLoop(nextIndex, delayMs);
+  }, delayMs);
+}
+
 
 
 /* ============================================================
@@ -1399,85 +1558,92 @@ function copyJson() {
 }
 
 /* ============================================================
-   PRESETS (新增)
+   PRESETS (文件导入导出)
    ============================================================ */
-function loadPresets() {
-  fetch("/api/presets").then(function(r) { return r.json(); }).then(function(data) {
-    presets = data.presets || [];
-    renderPalette();
-  }).catch(function() { presets = []; renderPalette(); });
-}
-
-function doSavePreset() {
-  if (blockTree.length === 0) { addLogMessage(translate("\u753B\u5E03\u4E3A\u7A7A","Canvas empty"), "error"); return; }
-  var name = prompt(translate("\u8F93\u5165\u9884\u8BBE\u540D\u79F0","Enter preset name"));
-  if (!name || !name.trim()) return;
-  name = name.trim();
-  var blocks = JSON.parse(JSON.stringify(blockTree));
-  function stripIds(b) { delete b.id; if (b.children) { for (var k in b.children) b.children[k].forEach(stripIds); } }
-  blocks.forEach(stripIds);
-  fetch("/api/preset", {
-    method: "POST", headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ name: name, blocks: blocks })
-  }).then(function(r) { return r.json(); }).then(function(data) {
-    if (data.ok) { loadPresets(); addLogMessage(translate("\u9884\u8BBE\u5DF2\u4FDD\u5B58: ","Preset saved: ") + name, "ok"); showToast(translate("\u9884\u8BBE\u5DF2\u4FDD\u5B58","Preset saved"), "ok"); }
-    else { addLogMessage(translate("\u4FDD\u5B58\u5931\u8D25","Save failed"), "error"); }
-  }).catch(function() { addLogMessage(translate("\u4FDD\u5B58\u5931\u8D25","Save failed"), "error"); });
-}
-
-function doSaveRawAsPreset() {
-  var textarea = document.getElementById("rawInput");
-  if (!textarea) return;
-  var text = textarea.value.trim();
-  if (!text) { addLogMessage(translate("\u5185\u5BB9\u4E3A\u7A7A","Empty"), "error"); return; }
-  try { JSON.parse(text); } catch(e) { addLogMessage("JSON: " + e.message, "error"); return; }
-  var name = prompt(translate("\u8F93\u5165\u9884\u8BBE\u540D\u79F0","Enter preset name"));
-  if (!name || !name.trim()) return;
-  name = name.trim();
-  var blocks = [{ type: "raw_cmd", params: { json: text }, children: {} }];
-  fetch("/api/preset", {
-    method: "POST", headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ name: name, blocks: blocks })
-  }).then(function(r) { return r.json(); }).then(function(data) {
-    if (data.ok) { loadPresets(); addLogMessage(translate("\u9884\u8BBE\u5DF2\u4FDD\u5B58: ","Preset saved: ") + name, "ok"); showToast(translate("\u9884\u8BBE\u5DF2\u4FDD\u5B58","Preset saved"), "ok"); }
-    else { addLogMessage(translate("\u4FDD\u5B58\u5931\u8D25","Save failed"), "error"); }
-  }).catch(function() { addLogMessage(translate("\u4FDD\u5B58\u5931\u8D25","Save failed"), "error"); });
-}
-
-function loadPreset(idx) {
-  var p = presets[idx];
-  if (!p || !p.blocks) return;
-  blockTree = [];
-  nextBlockId = 1;
-  function restoreIds(b) {
-    b.id = nextBlockId++;
-    if (!b.params) b.params = {};
-    if (!b.children) b.children = {};
-    var def = getBlockDef(b.type);
-    if (def && def.children) {
-      def.children.forEach(function(slot) {
-        if (!b.children[slot.key]) b.children[slot.key] = [];
-        b.children[slot.key].forEach(restoreIds);
-      });
-    }
+function exportPresets() {
+  if (blockTree.length === 0) {
+    showToast(translate('\u753B\u5E03\u4E3A\u7A7A\uFF0C\u65E0\u6CD5\u5BFC\u51FA','Canvas empty, nothing to export'), "err");
+    return;
   }
-  p.blocks.forEach(function(b) { restoreIds(b); blockTree.push(b); });
-  selectedBlockId = null;
-  renderCanvas();
-  updateJsonPreview();
-  addLogMessage(translate("\u9884\u8BBE\u5DF2\u52A0\u8F7D: ","Preset loaded: ") + p.name, "ok");
-  showToast(translate("\u9884\u8BBE\u5DF2\u52A0\u8F7D","Preset loaded"), "ok");
+  var blocks = JSON.parse(JSON.stringify(blockTree));
+  function stripIds(b) {
+    delete b.id;
+    if (b.children) { for (var k in b.children) b.children[k].forEach(stripIds); }
+  }
+  blocks.forEach(stripIds);
+  var data = { version: 1, blocks: blocks, timestamp: Date.now() };
+  var json = JSON.stringify(data, null, 2);
+  var blob = new Blob([json], { type: "application/json" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = "esp32_preset_" + new Date().toISOString().slice(0,10) + ".json";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  addLogMessage(translate('\u5BFC\u51FA\u6210\u529F: ','Exported: ') + blocks.length + translate(' \u4E2A\u79EF\u6728\u5757',' block(s)'), "ok");
+  showToast(translate('\u5BFC\u51FA\u6210\u529F','Export successful'), "ok");
 }
 
-function deletePreset(idx) {
-  var p = presets[idx];
-  if (!p) return;
-  if (!confirm(translate("\u5220\u9664\u9884\u8BBE ","Delete preset ") + p.name + "?")) return;
-  fetch("/api/preset/" + encodeURIComponent(p.name), { method: "DELETE" })
-    .then(function(r) { return r.json(); }).then(function(data) {
-      if (data.ok) { loadPresets(); addLogMessage(translate("\u9884\u8BBE\u5DF2\u5220\u9664","Preset deleted"), "ok"); }
-    }).catch(function() { addLogMessage(translate("\u5220\u9664\u5931\u8D25","Delete failed"), "error"); });
+
+function handleImportFile(input) {
+  if (!input.files || input.files.length === 0) return;
+  var file = input.files[0];
+  if (!file.name.endsWith('.json')) {
+    showToast(translate('\u8BF7\u9009\u62E9.json\u6587\u4EF6','Please select a .json file'), "err");
+    input.value = '';
+    return;
+  }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var data = JSON.parse(e.target.result);
+      var importBlocks = null;
+      if (data.blocks && Array.isArray(data.blocks)) {
+        importBlocks = data.blocks;
+      } else if (data.presets && Array.isArray(data.presets)) {
+        var allBlocks = [];
+        data.presets.forEach(function(p) {
+          if (p.blocks && Array.isArray(p.blocks)) {
+            allBlocks = allBlocks.concat(p.blocks);
+          }
+        });
+        importBlocks = allBlocks;
+      }
+      if (!importBlocks || importBlocks.length === 0) {
+        showToast(translate('\u65E0\u6548\u7684\u9884\u8BBE\u6587\u4EF6\u683C\u5F0F','Invalid preset file format'), "err");
+        return;
+      }
+      function restoreIds(b) {
+        b.id = nextBlockId++;
+        if (!b.params) b.params = {};
+        if (!b.children) b.children = {};
+        var def = getBlockDef(b.type);
+        if (def && def.children) {
+          def.children.forEach(function(slot) {
+            if (!b.children[slot.key]) b.children[slot.key] = [];
+            b.children[slot.key].forEach(restoreIds);
+          });
+        }
+      }
+      importBlocks.forEach(restoreIds);
+      for (var i = 0; i < importBlocks.length; i++) {
+        blockTree.push(importBlocks[i]);
+      }
+      selectedBlockId = null;
+      renderCanvas();
+      updateJsonPreview();
+      addLogMessage(translate('\u5BFC\u5165\u6210\u529F: ','Imported: ') + importBlocks.length + translate(' \u4E2A\u79EF\u6728\u5757\u5DF2\u8FFD\u52A0\u5230\u753B\u5E03',' block(s) appended to canvas'), "ok");
+      showToast(translate('\u5BFC\u5165\u6210\u529F','Import successful'), "ok");
+    } catch(ex) {
+      showToast(translate('\u6587\u4EF6\u89E3\u6790\u5931\u8D25','File parse error'), "err");
+    }
+    input.value = '';
+  };
+  reader.readAsText(file);
 }
+
 
 /* ============================================================
    LANGUAGE
@@ -1487,11 +1653,12 @@ function applyLanguage() {
   document.getElementById("optLoop").textContent = translate("\u5FAA\u73AF\uFF08\u91CD\u590D\uFF09","Loop");
   document.getElementById("optStep").textContent = translate("\u6B65\u8FDB\uFF08\u8C03\u8BD5\uFF09","Step");
   document.getElementById("optSeq").textContent = translate("\u987A\u5E8F\uFF08\u9010\u6761\uFF09","Sequential");
+   document.getElementById("optSeqLoop").textContent = translate("\u987A\u5E8F\u5FAA\u73AF","SeqLoop");
   document.getElementById("headerTitle").textContent = translate("\u547D\u4EE4\u6784\u5EFA\u5668","Command Builder");
   document.getElementById("btnBack").innerHTML = "&larr; " + translate("\u914D\u7F6E","Config");
   document.getElementById("btnRaw").textContent = translate("\u539F\u59CB","Raw");
-  document.getElementById("btnSend").textContent = translate("\u53D1\u9001","Send");
-  document.getElementById("btnClear").textContent = translate("\u6E05\u7A7A","Clear");
+  updateSendButton(loopTimer !== null);
+    document.getElementById("btnClear").textContent = translate("\u6E05\u7A7A","Clear");
   document.getElementById("btnLang").textContent = language === "zh" ? "EN" : "\u4E2D";
   document.getElementById("labelTarget").textContent = translate("\u76EE\u6807:","Target:");
   document.getElementById("labelPersist").textContent = translate("\u4FDD\u5B58NVS","Save NVS");
@@ -1536,7 +1703,6 @@ function loadDeviceInfo() {
 document.addEventListener("DOMContentLoaded", function() {
   applyLanguage();
   connectWebSocket();
-  loadPresets();
   loadDeviceInfo();
 });
 

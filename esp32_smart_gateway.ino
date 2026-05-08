@@ -22,7 +22,7 @@
 
 
 
-const char *OTA_VERIFY_TAG = "DHT后端补全4";
+const char *OTA_VERIFY_TAG = "预设修复";
 
 
 WebServer server(80);

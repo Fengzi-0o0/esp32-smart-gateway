@@ -71,148 +71,6 @@ static void handleGetConfig() {
   server.send(200, "application/json", json);
 }
 
-static void handleGetPresets() {
-    Preferences prefs;
-    prefs.begin("presets", true);
-    uint8_t cnt = prefs.getUChar("cnt", 0);
-    if (cnt > 20) cnt = 20;
-
-    JsonDocument doc;
-    JsonArray arr = doc["presets"].to<JsonArray>();
-
-    for (uint8_t i = 0; i < cnt; i++) {
-        String p = "p" + String(i) + "_";
-        String name = prefs.getString((p + "nm").c_str(), "");
-        String json = prefs.getString((p + "js").c_str(), "[]");
-        if (name.length() > 0) {
-            JsonObject o = arr.add<JsonObject>();
-            o["id"] = i;
-            o["name"] = name;
-            JsonDocument blocksDoc;
-            if (!deserializeJson(blocksDoc, json)) {
-                o["blocks"] = blocksDoc;
-            }
-        }
-    }
-    prefs.end();
-
-    String response;
-    serializeJson(doc, response);
-    server.send(200, "application/json", response);
-}
-
-static void handlePostPresets() {
-    if (!server.hasArg("plain")) {
-        server.send(400, "application/json", "{\"ok\":false}");
-        return;
-    }
-
-    JsonDocument doc;
-    if (deserializeJson(doc, server.arg("plain"))) {
-        server.send(400, "application/json", "{\"ok\":false}");
-        return;
-    }
-
-    String name = doc["name"] | String("");
-    if (name.length() == 0) {
-        server.send(400, "application/json", "{\"ok\":false,\"error\":\"name required\"}");
-        return;
-    }
-
-    Preferences prefs;
-    prefs.begin("presets", false);
-    uint8_t cnt = prefs.getUChar("cnt", 0);
-
-    int existingIdx = -1;
-    for (uint8_t i = 0; i < cnt && i < 20; i++) {
-        if (prefs.getString(("p" + String(i) + "_nm").c_str(), "") == name) {
-            existingIdx = i;
-            break;
-        }
-    }
-
-    int idx = (existingIdx >= 0) ? existingIdx : cnt;
-    if (idx >= 20) {
-        prefs.end();
-        server.send(400, "application/json", "{\"ok\":false,\"error\":\"max 20 presets\"}");
-        return;
-    }
-
-    String p = "p" + String(idx) + "_";
-    prefs.putString((p + "nm").c_str(), name);
-
-    String blocksJson;
-    serializeJson(doc["blocks"], blocksJson);
-    prefs.putString((p + "js").c_str(), blocksJson);
-
-    if (existingIdx < 0) {
-        prefs.putUChar("cnt", cnt + 1);
-    }
-    prefs.end();
-
-    JsonDocument resp;
-    resp["ok"] = true;
-    resp["id"] = idx;
-    String response;
-    serializeJson(resp, response);
-    server.send(200, "application/json", response);
-    Serial.printf("[PRESET] Saved '%s' (idx=%d, %d bytes)\n",
-                  name.c_str(), idx, blocksJson.length());
-}
-
-static void handleDeletePresets() {
-    // 从 URL 路径中提取名称: /api/preset/xxx
-    String uri = server.uri();
-    String name = "";
-    int lastSlash = uri.lastIndexOf('/');
-    if (lastSlash >= 0 && lastSlash < (int)uri.length() - 1) {
-        name = uri.substring(lastSlash + 1);
-    }
-    // 也兼容 ?name=xxx 查询参数
-    if (name.length() == 0 && server.hasArg("name")) {
-        name = server.arg("name");
-    }
-    if (name.length() == 0) {
-        server.send(400, "application/json", "{\"ok\":false,\"error\":\"name required\"}");
-        return;
-    }
-
-    Preferences prefs;
-    prefs.begin("presets", false);
-    uint8_t cnt = prefs.getUChar("cnt", 0);
-
-    int foundIdx = -1;
-    for (uint8_t i = 0; i < cnt && i < 20; i++) {
-        if (prefs.getString(("p" + String(i) + "_nm").c_str(), "") == name) {
-            foundIdx = i;
-            break;
-        }
-    }
-
-    if (foundIdx < 0) {
-        prefs.end();
-        server.send(404, "application/json", "{\"ok\":false,\"error\":\"not found\"}");
-        return;
-    }
-
-    // 前移覆盖
-    for (int i = foundIdx; i < cnt - 1; i++) {
-        String src = "p" + String(i + 1) + "_";
-        String dst = "p" + String(i) + "_";
-        prefs.putString((dst + "nm").c_str(), prefs.getString((src + "nm").c_str(), ""));
-        prefs.putString((dst + "js").c_str(), prefs.getString((src + "js").c_str(), ""));
-    }
-
-    String last = "p" + String(cnt - 1) + "_";
-    prefs.remove((last + "nm").c_str());
-    prefs.remove((last + "js").c_str());
-    prefs.putUChar("cnt", cnt - 1);
-    prefs.end();
-
-    server.send(200, "application/json", "{\"ok\":true}");
-    Serial.printf("[PRESET] Deleted '%s' (idx=%d)\n", name.c_str(), foundIdx);
-}
-
 static void handlePostCommand() {
   if (!server.hasArg("plain")) {
     server.send(400, "application/json", "{\"ok\":false,\"error\":\"no body\"}");
@@ -230,7 +88,7 @@ static void handlePostCommand() {
     return;
   }
 
-  extern void executeCommand(JsonDocument &doc);
+  extern void executeCommand(JsonDocument & doc);
   executeCommand(doc);
 
   server.send(200, "application/json", "{\"ok\":true}");
@@ -297,8 +155,8 @@ static void handlePostConfig() {
   if (doc.containsKey("mqttSsl")) {
     config.mqttSsl = doc["mqttSsl"].as<bool>();
   }
-  if (doc.containsKey("mqttEnabled")) {                  // ← 加这一段
-    config.mqttEnabled = doc["mqttEnabled"].as<bool>();  //
+  if (doc.containsKey("mqttEnabled")) {
+    config.mqttEnabled = doc["mqttEnabled"].as<bool>();
   }
   if (doc.containsKey("deviceName")) {
     config.deviceName = doc["deviceName"].as<String>();
@@ -385,7 +243,7 @@ static void handleGetInfo() {
   doc["heapFree"] = ESP.getFreeHeap();
   doc["firmware"] = FIRMWARE_VERSION;
   doc["mac"] = WiFi.macAddress();
-   doc["deviceName"] = config.deviceName; 
+  doc["deviceName"] = config.deviceName;
   String json;
   serializeJson(doc, json);
   server.send(200, "application/json", json);
@@ -475,7 +333,6 @@ static void handleGetPinCapabilities() {
     o["touch"] = pinCaps[i].touch;
     o["altFunc"] = pinCaps[i].altFunc;
   }
-  // 添加禁止引脚说明
   doc["note"] = "GPIO 33-37 为 Flash SPI 专用，禁止使用";
   doc["validPins"] = validExternalPinsCount;
 
@@ -492,11 +349,11 @@ static void handleGetBatchStatus() {
   JsonDocument doc;
   doc["type"] = "batch_status";
   doc["deviceId"] = getDeviceId();
-   doc["mac"] = WiFi.macAddress();//设备芯片序列号
+  doc["mac"] = WiFi.macAddress();
   doc["timestamp"] = millis();
   doc["heapFree"] = ESP.getFreeHeap();
   doc["uptime"] = millis() / 1000;
-  doc["otaVerify"] = OTA_VERIFY_TAG;  // 新增
+  doc["otaVerify"] = OTA_VERIFY_TAG;
 
   JsonArray snrs = doc["sensors"].to<JsonArray>();
   for (auto &s : config.sensors) {
@@ -530,7 +387,6 @@ static void handleMonitorPage() {
 static void handleGetSystem() {
   JsonDocument doc;
 
-  // 内存
   doc["heapSize"] = ESP.getHeapSize();
   doc["heapFree"] = ESP.getFreeHeap();
   doc["heapMinFree"] = ESP.getMinFreeHeap();
@@ -539,29 +395,24 @@ static void handleGetSystem() {
   doc["psramFree"] = ESP.getFreePsram();
   doc["psramMinFree"] = ESP.getMinFreePsram();
 
-  // 存储
   doc["flashSize"] = ESP.getFlashChipSize();
   doc["sketchSize"] = ESP.getSketchSize();
   doc["sketchFree"] = ESP.getFreeSketchSpace();
 
-  // CPU
   doc["cpuFreq"] = ESP.getCpuFreqMHz();
   doc["chipModel"] = ESP.getChipModel();
   doc["chipRev"] = ESP.getChipRevision();
 
-  // 网络
   doc["rssi"] = WiFi.RSSI();
   doc["staIP"] = WifiManager::getStaIP();
   doc["apIP"] = WifiManager::getApIP();
   doc["mqttStatus"] = MqttClient::isConnected() ? "connected" : "disconnected";
 
-  // 系统
   doc["uptime"] = millis() / 1000;
   doc["firmware"] = FIRMWARE_VERSION;
   doc["deviceId"] = getDeviceId();
   doc["deviceName"] = config.deviceName;
 
-  // 任务统计
   int at = 0;
   for (auto &t : TimerEngine::getList())
     if (t.enabled) at++;
@@ -593,22 +444,20 @@ static void handleGetDevices() {
   doc["deviceName"] = config.deviceName;
   JsonArray arr = doc["devices"].to<JsonArray>();
 
-  // 自己
   JsonObject self = arr.add<JsonObject>();
-  self["id"]   = getDeviceId();
+  self["id"] = getDeviceId();
   self["name"] = config.deviceName;
-  self["ip"]   = WifiManager::getApIP();
-  self["lan"]  = true;
+  self["ip"] = WifiManager::getApIP();
+  self["lan"] = true;
 
-  // DualChannel 注册的设备
   for (int i = 0; i < DualChannel::getDeviceCount(); i++) {
     DeviceEntry *dev = DualChannel::getDeviceByIndex(i);
     if (!dev) continue;
     JsonObject o = arr.add<JsonObject>();
-    o["id"]   = dev->deviceId;
+    o["id"] = dev->deviceId;
     o["name"] = dev->deviceName;
-    o["ip"]   = dev->ip;
-    o["lan"]  = dev->lanOnline;
+    o["ip"] = dev->ip;
+    o["lan"] = dev->lanOnline;
   }
 
   String json;
@@ -636,7 +485,6 @@ static void wsOtaEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t leng
 
     case WStype_CONNECTED:
       Serial.printf("[OTA-WS] Client #%u connected\n", num);
-      // 重置 OTA 状态，防止被之前的连接卡住
       if (otaInProgress) {
         Serial.println("[OTA-WS] Reset stale OTA state");
         Update.abort();
@@ -661,7 +509,6 @@ static void wsOtaEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t leng
       {
         String msg = String((char *)payload);
 
-        // OTA: START
         if (msg.startsWith("START")) {
           if (otaInProgress) {
             wsOta.sendTXT(num, "ERR:Another OTA in progress");
@@ -679,7 +526,6 @@ static void wsOtaEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t leng
           break;
         }
 
-        // OTA: DONE
         if (msg == "DONE") {
           if (!otaInProgress || !Update.isRunning()) {
             Serial.println("[OTA-WS] DONE but not active");
@@ -701,77 +547,67 @@ static void wsOtaEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t leng
           break;
         }
 
-        // 通用 JSON 指令通道
-             // 通用 JSON 指令通道
-      if (!otaInProgress && msg.startsWith("{")) {
-        JsonDocument doc;
-        DeserializationError err = deserializeJson(doc, msg);
-        if (!err) {
-          extern void executeCommand(JsonDocument &doc);
-          extern void setResultSink(uint8_t, void(*)(uint8_t, const char*));
-          setResultSink(num, wsResultForward);
-          executeCommand(doc);
-          setResultSink(0xFF, nullptr);
-          Serial.printf("[WS-CMD] Executed from client #%u\n", num);
-          wsOta.sendTXT(num, "{\"type\":\"ws_ack\",\"status\":\"ok\"}");
-        } else {
-          Serial.printf("[WS-CMD] JSON error: %s\n", err.c_str());
-          wsOta.sendTXT(num, "{\"type\":\"ws_ack\",\"status\":\"error\"}");
+        if (!otaInProgress && msg.startsWith("{")) {
+          JsonDocument doc;
+          DeserializationError err = deserializeJson(doc, msg);
+          if (!err) {
+            extern void executeCommand(JsonDocument & doc);
+            extern void setResultSink(uint8_t, void (*)(uint8_t, const char *));
+            setResultSink(num, wsResultForward);
+            executeCommand(doc);
+            setResultSink(0xFF, nullptr);
+            Serial.printf("[WS-CMD] Executed from client #%u\n", num);
+            wsOta.sendTXT(num, "{\"type\":\"ws_ack\",\"status\":\"ok\"}");
+          } else {
+            Serial.printf("[WS-CMD] JSON error: %s\n", err.c_str());
+            wsOta.sendTXT(num, "{\"type\":\"ws_ack\",\"status\":\"error\"}");
+          }
         }
+        break;
       }
-      break;  // ← 这个 break 原本就有，不用动
-    }
 
 
-        default:
-          break;
-      }
+    default:
+      break;
   }
+}
 
 
-  // ==================== WebServer 初始化 ====================
+// ==================== WebServer 初始化 ====================
 
-  namespace WebServerManager {
+namespace WebServerManager {
 
-  void init() {
-    server.on("/", HTTP_GET, handleRoot);
-    server.on("/api/config", HTTP_GET, handleGetConfig);
-    server.on("/api/config", HTTP_POST, handlePostConfig);
-    server.on("/api/scan", HTTP_GET, handleScanWifi);
-    server.on("/api/info", HTTP_GET, handleGetInfo);
-    server.on("/api/device", HTTP_GET, handleGetDevice);
-    server.on("/api/device", HTTP_POST, handlePostDevice);
-    server.on("/ota", HTTP_GET, handleOtaPage);
+void init() {
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/api/config", HTTP_GET, handleGetConfig);
+  server.on("/api/config", HTTP_POST, handlePostConfig);
+  server.on("/api/scan", HTTP_GET, handleScanWifi);
+  server.on("/api/info", HTTP_GET, handleGetInfo);
+  server.on("/api/device", HTTP_GET, handleGetDevice);
+  server.on("/api/device", HTTP_POST, handlePostDevice);
+  server.on("/ota", HTTP_GET, handleOtaPage);
 
-    server.on("/api/pins", HTTP_GET, handleGetPinCapabilities);
-    server.on("/api/batch_status", HTTP_GET, handleGetBatchStatus);
-    server.on("/pins", HTTP_GET, handlePinsPage);
-    server.on("/monitor", HTTP_GET, handleMonitorPage);
-    server.on("/api/system", HTTP_GET, handleGetSystem);
-    server.on("/builder", HTTP_GET, handleCmdBuilderPage);
-  
-   server.on("/api/devices", HTTP_GET, handleGetDevices);
+  server.on("/api/pins", HTTP_GET, handleGetPinCapabilities);
+  server.on("/api/batch_status", HTTP_GET, handleGetBatchStatus);
+  server.on("/pins", HTTP_GET, handlePinsPage);
+  server.on("/monitor", HTTP_GET, handleMonitorPage);
+  server.on("/api/system", HTTP_GET, handleGetSystem);
+  server.on("/builder", HTTP_GET, handleCmdBuilderPage);
 
-server.on("/api/presets", HTTP_GET, handleGetPresets);
-server.on("/api/preset", HTTP_POST, handlePostPresets);
-server.on("/api/preset", HTTP_DELETE, handleDeletePresets);
-server.on("/api/command", HTTP_POST, handlePostCommand);
+  server.on("/api/devices", HTTP_GET, handleGetDevices);
 
-   
+  server.on("/api/command", HTTP_POST, handlePostCommand);
 
-    server.on("/api/pins", HTTP_GET, handleGetPinCapabilities);
+  server.begin();
 
+  wsOta.begin();
+  wsOta.onEvent(wsOtaEvent);
+  Serial.println("[WEB] Server on 80, OTA-WS on 8080");
+}
 
-    server.begin();
+void loop() {
+  server.handleClient();
+  wsOta.loop();
+}
 
-    wsOta.begin();
-    wsOta.onEvent(wsOtaEvent);
-    Serial.println("[WEB] Server on 80, OTA-WS on 8080");
-  }
-
-  void loop() {
-    server.handleClient();
-    wsOta.loop();
-  }
-
-  }  // namespace WebServerManager
+}  // namespace WebServerManager
