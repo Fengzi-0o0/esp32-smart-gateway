@@ -124,6 +124,16 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
 ::-webkit-scrollbar-track{background:var(--bg)}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+.block.disabled{opacity:.5}
+.block.disabled .block-header .name{text-decoration:line-through;color:var(--muted)}
+.block.disabled .block-body{display:none}
+.block-action.toggle-disable{font-size:10px}
+.block-action.toggle-disable.is-disabled{color:var(--green);border-color:var(--green)}
+.block-delay{border-left-color:var(--amber)!important}
+.block-delay .block-header{background:rgba(245,158,11,.08)!important;padding:4px 10px}
+.delay-input{width:65px;padding:2px 5px;background:var(--bg);border:1px solid var(--border);border-radius:3px;color:var(--amber);font-size:11px;font-family:'JetBrains Mono',monospace;outline:none;text-align:center}
+.delay-input:focus{border-color:var(--amber)}
+.delay-unit{font-size:10px;color:var(--muted);margin-left:3px}
 @media(max-width:700px){
   .workspace{flex-direction:column}
   .palette{width:100%;max-height:150px;border-right:none;border-bottom:1px solid var(--border)}
@@ -455,6 +465,8 @@ var BLOCK_DEFS = {
   /* Raw JSON (新增) */
   "raw_cmd":     { cat:"system", zh:"\u539F\u59CB JSON \u547D\u4EE4", en:"Raw JSON Command", cmd:"__raw__",
     fields:[["json","JSON \u6570\u636E","JSON Data","textarea"]] },
+  "delay": { cat:"system", zh:"\u5EF6\u65F6", en:"Delay", cmd:"__delay__",
+    fields:[["delay","\u5EF6\u65F6ms","Delay ms","number",null,500]] },
 
   /* Module (新增分类) */
   "mod_ds18b20":  { cat:"module", zh:"DS18B20 \u6E29\u5EA6\u4F20\u611F\u5668", en:"DS18B20 Temp", cmd:"module", action:"add", moduleType:"ds18b20",
@@ -721,6 +733,7 @@ function createBlock(type) {
   var def = getBlockDef(type);
   if (!def) return null;
   var block = { id: nextBlockId++, type: type, params: {}, children: {} };
+  block.disabled = false;
   if (def.isCondition && def.source) block.params.source = def.source;
   if (def.fields) {
     for (var i = 0; i < def.fields.length; i++) {
@@ -864,6 +877,32 @@ function updateSendButton(isLoopRunning) {
   }
 }
 
+
+function toggleDisable(id) {
+  var block = findBlockById(id);
+  if (!block) return;
+  block.disabled = !block.disabled;
+  renderCanvas();
+  updateJsonPreview();
+}
+
+function buildExecutionPlan() {
+  var plan = [];
+  var nextDelay = -1;
+  for (var i = 0; i < blockTree.length; i++) {
+    var block = blockTree[i];
+    var def = getBlockDef(block.type);
+    if (!def) continue;
+    if (block.disabled) continue;
+    if (def.cmd === "__delay__") {
+      nextDelay = parseInt(block.params.delay) || 0;
+      continue;
+    }
+    plan.push({ blockIndex: i, customDelay: nextDelay });
+    nextDelay = -1;
+  }
+  return plan;
+}
 
 function clearCanvas() {
   stopLoop();
@@ -1017,8 +1056,9 @@ function renderBlock(block, isChild) {
   var label = language === "zh" ? def.zh : def.en;
   var icon = getCategoryIcon(category);
   var isSelected = block.id === selectedBlockId;
+  var isDisabled = block.disabled;
 
-  var html = '<div id="block-' + block.id + '" class="block block-' + category + (isSelected ? ' selected' : '') + '">';
+  var html = '<div id="block-' + block.id + '" class="block block-' + category + (isSelected ? ' selected' : '') + (isDisabled ? ' disabled' : '') + (def.cmd === "__delay__" ? ' block-delay' : '') + '">';
   html += '<div class="block-header" onclick="selectBlock(' + block.id + ')">';
   html += '<span class="icon">' + icon + '</span>';
   html += '<span class="name">' + escapeHtml(label) + '</span>';
@@ -1027,10 +1067,24 @@ function renderBlock(block, isChild) {
     html += '<button class="block-action" onclick="event.stopPropagation();moveBlock(' + block.id + ',-1)" title="Up">\u2191</button>';
     html += '<button class="block-action" onclick="event.stopPropagation();moveBlock(' + block.id + ',1)" title="Down">\u2193</button>';
   }
+  if (isDisabled) {
+    html += '<button class="block-action toggle-disable is-disabled" onclick="event.stopPropagation();toggleDisable(' + block.id + ')" title="' + translate('\u542F\u7528','Enable') + '">\u2713</button>';
+  } else {
+    html += '<button class="block-action toggle-disable" onclick="event.stopPropagation();toggleDisable(' + block.id + ')" title="' + translate('\u7981\u7528','Disable') + '">\u2298</button>';
+  }
   html += '<button class="block-action delete" onclick="event.stopPropagation();removeBlock(' + block.id + ')" title="Delete">\u2715</button>';
   html += '</div></div>';
 
   html += '<div class="block-body">';
+
+  if (def.cmd === "__delay__") {
+    var delayVal = block.params.delay || 500;
+    html += '<span style="flex:1"></span>';
+    html += '<input type="number" class="delay-input" value="' + delayVal + '" min="0" step="100" onclick="event.stopPropagation()" onchange="updateField(' + block.id + ',\'delay\',parseInt(this.value)||0)">';
+    html += '<span class="delay-unit">ms</span>';
+    html += '</div></div>';
+    return html;
+  }
 
   /* raw_cmd 特殊渲染 */
   if (def.cmd === "__raw__") {
@@ -1241,6 +1295,8 @@ function blockToJson(block) {
     catch(e) { addLogMessage("Raw JSON error: " + e.message, "error"); return null; }
   }
 
+  if (def.cmd === "__delay__") return null;
+
   if (def.isCondition) return conditionToJson(block, def);
 
   var obj = {};
@@ -1319,6 +1375,7 @@ function buildFinalJson() {
   if (!blockTree.length) return null;
   var commands = [];
   for (var i = 0; i < blockTree.length; i++) {
+    if (blockTree[i].disabled) continue;
     var json = blockToJson(blockTree[i]);
     if (json) commands.push(json);
   }
@@ -1385,17 +1442,18 @@ function sendAll() {
   }
   else if (mode === "step") {
     stopLoop();
-    if (stepIndex >= blockTree.length) { stepIndex = 0; clearAllHighlights(); }
-    highlightBlock(blockTree[stepIndex].id);
-    var blockJson = blockToJson(blockTree[stepIndex]);
-    if (blockJson) {
-      var def = getBlockDef(blockTree[stepIndex].type);
-      var label = def ? (language === "zh" ? def.zh : def.en) : blockTree[stepIndex].type;
-      addLogMessage("Step " + (stepIndex + 1) + "/" + blockTree.length + ": " + label, "sent");
-      websocketSend(blockJson);
-    }
+    var plan = buildExecutionPlan();
+    if (plan.length === 0) return;
+    if (stepIndex >= plan.length) { stepIndex = 0; clearAllHighlights(); }
+    var entry = plan[stepIndex];
+    highlightBlock(blockTree[entry.blockIndex].id);
+    var def = getBlockDef(blockTree[entry.blockIndex].type);
+    var label = def ? (language === "zh" ? def.zh : def.en) : blockTree[entry.blockIndex].type;
+    addLogMessage("Step " + (stepIndex + 1) + "/" + plan.length + ": " + label, "sent");
+    var blockJson = blockToJson(blockTree[entry.blockIndex]);
+    if (blockJson) websocketSend(blockJson);
     stepIndex++;
-    if (stepIndex >= blockTree.length) {
+    if (stepIndex >= plan.length) {
       addLogMessage(translate("\u6240\u6709\u6B65\u9AA4\u5DF2\u6267\u884C\u5B8C\u6BD5","All steps completed"), "ok");
       setTimeout(clearAllHighlights, 800);
     }
@@ -1422,79 +1480,68 @@ function sendAll() {
   }
   else if (mode === "sequential") {
     stopLoop();
-    var total = blockTree.length;
-    for (var i = 0; i < total; i++) {
-      (function(index) {
+    var plan = buildExecutionPlan();
+    if (plan.length === 0) return;
+    var accumulatedTime = 0;
+    for (var i = 0; i < plan.length; i++) {
+      (function(idx, time) {
         setTimeout(function() {
-          highlightBlock(blockTree[index].id);
-          var def = getBlockDef(blockTree[index].type);
-          var label = def ? (language === "zh" ? def.zh : def.en) : blockTree[index].type;
-          addLogMessage("Seq " + (index + 1) + "/" + total + ": " + label, "sent");
-          var blockJson = blockToJson(blockTree[index]);
+          highlightBlock(blockTree[plan[idx].blockIndex].id);
+          var def = getBlockDef(blockTree[plan[idx].blockIndex].type);
+          var label = def ? (language === "zh" ? def.zh : def.en) : blockTree[plan[idx].blockIndex].type;
+          addLogMessage("Seq " + (idx + 1) + "/" + plan.length + ": " + label, "sent");
+          var blockJson = blockToJson(blockTree[plan[idx].blockIndex]);
           if (blockJson) websocketSend(blockJson);
-          if (index === total - 1) {
+          if (idx === plan.length - 1) {
             addLogMessage(translate("\u987A\u5E8F\u6267\u884C\u5B8C\u6BD5","Sequential completed"), "ok");
             setTimeout(clearAllHighlights, 600);
           }
-        }, index * delayMs);
-      })(i);
+        }, time);
+      })(i, accumulatedTime);
+      if (i < plan.length - 1) {
+        var nextDelay = plan[i + 1].customDelay >= 0 ? plan[i + 1].customDelay : delayMs;
+        accumulatedTime += nextDelay;
+      }
     }
   }
-    else if (mode === "sequential") {
-    stopLoop();
-    stopSeqLoop();
-    var total = blockTree.length;
-    for (var i = 0; i < total; i++) {
-      (function(index) {
-        setTimeout(function() {
-          highlightBlock(blockTree[index].id);
-          var def = getBlockDef(blockTree[index].type);
-          var label = def ? (language === "zh" ? def.zh : def.en) : blockTree[index].type;
-          addLogMessage("Seq " + (index + 1) + "/" + total + ": " + label, "sent");
-          var blockJson = blockToJson(blockTree[index]);
-          if (blockJson) websocketSend(blockJson);
-          if (index === total - 1) {
-            addLogMessage(translate("\u987A\u5E8F\u6267\u884C\u5B8C\u6BD5","Sequential completed"), "ok");
-            setTimeout(clearAllHighlights, 600);
-          }
-        }, index * delayMs);
-      })(i);
-    }
-  }
-
-  /* ▼▼▼ 新增：SeqLoop — 逐条顺序循环 ▼▼▼ */
   else if (mode === "seqloop") {
     if (seqLoopTimer !== null) {
       stopSeqLoop();
       return;
     }
-    if (blockTree.length === 0) return;
+    var plan = buildExecutionPlan();
+    if (plan.length === 0) return;
     loopIteration = 0;
     updateSendButton(true);
-    sendNextSeqLoop(0, delayMs);
+    sendNextSeqLoop(0, delayMs, plan);
   }
-  /* ▲▲▲ 新增结束 ▲▲▲ */
 }
 
-function sendNextSeqLoop(index, delayMs) {
-  if (index >= blockTree.length) {
+function sendNextSeqLoop(index, delayMs, plan) {
+  if (!plan) plan = buildExecutionPlan();
+  if (plan.length === 0) return;
+  if (index >= plan.length) {
     index = 0;
     loopIteration++;
     addLogMessage(translate("\u7B2C ","#") + loopIteration + translate(" \u8F6E\u5FAA\u73AF\u5B8C\u6210"," loop round done"), "ok");
   }
-  highlightBlock(blockTree[index].id);
-  var def = getBlockDef(blockTree[index].type);
-  var label = def ? (language === "zh" ? def.zh : def.en) : blockTree[index].type;
+  highlightBlock(blockTree[plan[index].blockIndex].id);
+  var def = getBlockDef(blockTree[plan[index].blockIndex].type);
+  var label = def ? (language === "zh" ? def.zh : def.en) : blockTree[plan[index].blockIndex].type;
   var round = loopIteration + 1;
-  addLogMessage("SL " + round + "." + (index + 1) + "/" + blockTree.length + ": " + label, "sent");
-  var blockJson = blockToJson(blockTree[index]);
+  addLogMessage("SL " + round + "." + (index + 1) + "/" + plan.length + ": " + label, "sent");
+  var blockJson = blockToJson(blockTree[plan[index].blockIndex]);
   if (blockJson) websocketSend(blockJson);
 
   var nextIndex = index + 1;
+  var nextDelay = delayMs;
+  if (nextIndex < plan.length && plan[nextIndex].customDelay >= 0) {
+    nextDelay = plan[nextIndex].customDelay;
+  }
   seqLoopTimer = setTimeout(function() {
     seqLoopTimer = null;
-    sendNextSeqLoop(nextIndex, delayMs);
-  }, delayMs);
+    sendNextSeqLoop(nextIndex, delayMs, plan);
+  }, nextDelay);
 }
 
 
@@ -1619,6 +1666,7 @@ function handleImportFile(input) {
       }
       function restoreIds(b) {
         b.id = nextBlockId++;
+        if (b.disabled === undefined) b.disabled = false;
         if (!b.params) b.params = {};
         if (!b.children) b.children = {};
         var def = getBlockDef(b.type);
