@@ -22,7 +22,7 @@
 
 
 
-const char *OTA_VERIFY_TAG = "预设修复3";
+const char *OTA_VERIFY_TAG = "AI功能加入";
 
 
 WebServer server(80);

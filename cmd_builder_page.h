@@ -138,7 +138,35 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
   .workspace{flex-direction:column}
   .palette{width:100%;max-height:150px;border-right:none;border-bottom:1px solid var(--border)}
   .palette-tabs{flex-wrap:nowrap;overflow-x:auto;max-height:none}
+  .ai-bar{flex-wrap:wrap}
+  .ai-input{min-width:120px}
+  .ai-status{max-width:100%;order:10;width:100%;text-align:center}
 }
+.ai-bar{display:flex;gap:6px;align-items:center;padding:6px 16px;background:var(--card);border-bottom:1px solid var(--border);flex-shrink:0}
+.ai-bar label{font-size:10px;color:var(--muted);font-weight:600;white-space:nowrap}
+.ai-input{flex:1;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11px;font-family:'Inter',sans-serif;outline:none;transition:.15s}
+.ai-input:focus{border-color:var(--cyan);box-shadow:0 0 8px rgba(0,212,255,.1)}
+.ai-input::placeholder{color:var(--muted);opacity:.6}
+.ai-send{padding:5px 12px;border:1px solid var(--cyan);background:rgba(0,212,255,.1);color:var(--cyan);border-radius:5px;font-size:11px;cursor:pointer;transition:.2s;font-weight:600;font-family:inherit;white-space:nowrap}
+.ai-send:hover{background:rgba(0,212,255,.2)}
+.ai-send:disabled{opacity:.4;cursor:not-allowed}
+.ai-cfg{width:24px;height:24px;border:1px solid var(--border);background:none;color:var(--muted);border-radius:4px;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.15s;flex-shrink:0}
+.ai-cfg:hover{border-color:var(--cyan);color:var(--cyan)}
+.ai-status{font-size:9px;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ai-status.loading{color:var(--amber)}
+.ai-status.ok{color:var(--green)}
+.ai-status.err{color:var(--red)}
+@keyframes aiPulse{0%,100%{opacity:1}50%{opacity:.4}}
+.ai-status.loading::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--amber);margin-right:4px;animation:aiPulse 1s ease infinite}
+.ai-modal-group{margin-bottom:12px}
+.ai-modal-group label{display:block;font-size:10px;color:var(--muted);margin-bottom:3px;font-weight:600}
+.ai-modal-group select,.ai-modal-group input[type=password],.ai-modal-group input[type=text]{width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11px;font-family:'JetBrains Mono',monospace;outline:none}
+.ai-modal-group select{cursor:pointer}
+.ai-modal-group select option{background:var(--card)}
+.ai-modal-group input:focus,.ai-modal-group select:focus{border-color:var(--cyan)}
+.ai-hint{font-size:9px;color:var(--muted);margin-top:3px;line-height:1.4}
+.ai-hint a{color:var(--cyan);text-decoration:none}
+.ai-provider-badge{font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);color:var(--cyan);font-family:'JetBrains Mono',monospace}
 </style>
 </head>
 <body>
@@ -184,6 +212,14 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
   </div>
   <div style="flex:1"></div>
   <span id="deviceInfo" style="display:flex;align-items:center;gap:5px;padding:3px 8px;border-radius:4px;background:rgba(0,212,255,.06);border:1px solid var(--border);font-size:9px;color:var(--cyan);font-family:'JetBrains Mono',monospace;white-space:nowrap;letter-spacing:.3px;opacity:.8"></span>
+</div>
+<div class="ai-bar">
+  <label>🤖</label>
+  <input type="text" class="ai-input" id="aiInput" placeholder="描述你想做的事，AI帮你添加代码块..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();aiSend()}">
+  <button class="ai-send" id="aiSendBtn" onclick="aiSend()">✨ AI</button>
+  <button class="ai-cfg" onclick="showAISettings()" title="AI设置">⚙</button>
+  <span class="ai-status" id="aiStatus"></span>
+  <span class="ai-provider-badge" id="aiProviderBadge"></span>
 </div>
 <div class="workspace">
 
@@ -1720,6 +1756,9 @@ function applyLanguage() {
     ? translate("\u65E5\u5FD7","Log") : "JSON";
   document.getElementById("connText").textContent = websocketConnected
     ? translate("\u5DF2\u8FDE\u63A5","Connected") : translate("\u5DF2\u65AD\u5F00","Disconnected");
+  var aiInput = document.getElementById("aiInput");
+  if (aiInput) aiInput.placeholder = translate("\u63CF\u8FF0\u4F60\u60F3\u505A\u7684\u4E8B\uFF0CAI\u5E2E\u4F60\u6DFB\u52A0\u4EE3\u7801\u5757...","Describe what you want, AI adds blocks...");
+  aiUpdateBadge();
   refreshTargets();
   renderPalette();
   renderCanvas();
@@ -1730,6 +1769,432 @@ function toggleLanguage() {
   language = (language === "zh") ? "en" : "zh";
   localStorage.setItem("lang", language);
   applyLanguage();
+}
+
+/* ============================================================
+   AI ASSISTANT
+   ============================================================ */
+var AI_PROVIDERS = {
+  pollinations: {
+    name: "Pollinations",
+    url: "https://text.pollinations.ai/openai",
+    model: "openai",
+    noKey: true,
+    free: true,
+    regUrl: "https://pollinations.ai"
+  },
+  custom: {
+    name: "OpenAI",
+    url: "https://api.openai.com/v1/chat/completions",
+    model: "gpt-4o-mini",
+    noKey: false,
+    free: false,
+    regUrl: "https://platform.openai.com"
+  }
+};
+
+var aiConfig = {
+  provider: localStorage.getItem("ai_provider") || "pollinations",
+  apiKey: localStorage.getItem("ai_apikey") || "",
+  customUrl: localStorage.getItem("ai_custom_url") || "",
+  customModel: localStorage.getItem("ai_custom_model") || ""
+};
+
+var aiBusy = false;
+
+function aiGetProvider() {
+  return AI_PROVIDERS[aiConfig.provider] || AI_PROVIDERS.pollinations;
+}
+
+function aiGetEffectiveUrl() {
+  if (aiConfig.provider === "custom" && aiConfig.customUrl) return aiConfig.customUrl;
+  return aiGetProvider().url;
+}
+
+function aiGetEffectiveModel() {
+  if (aiConfig.customModel) return aiConfig.customModel;
+  return aiGetProvider().model;
+}
+
+function aiUpdateBadge() {
+  var badge = document.getElementById("aiProviderBadge");
+  if (badge) {
+    var p = aiGetProvider();
+    badge.textContent = p.name + (p.noKey ? " (Free)" : "");
+  }
+}
+
+function aiSetStatus(text, type) {
+  var el = document.getElementById("aiStatus");
+  if (!el) return;
+  el.textContent = text;
+  el.className = "ai-status" + (type ? " " + type : "");
+}
+
+function buildBlockSchema() {
+  var lines = [];
+  for (var key in BLOCK_DEFS) {
+    if (!BLOCK_DEFS.hasOwnProperty(key)) continue;
+    var def = BLOCK_DEFS[key];
+    var line = key + " (" + def.zh + "/" + def.en + ")";
+    if (def.fields && def.fields.length) {
+      var parts = [];
+      for (var i = 0; i < def.fields.length; i++) {
+        var f = def.fields[i];
+        var fKey = f[0];
+        var fType = f[3];
+        var fOpts = f.length > 4 ? f[4] : null;
+        var fDefault = f.length > 5 ? f[5] : null;
+        var desc = fKey + ":" + fType;
+        if (fType === "select" && fOpts) {
+          var vals = [];
+          for (var j = 0; j < fOpts.length; j++) vals.push(fOpts[j][0]);
+          desc += "=" + vals.join("|");
+        } else if (fType === "pin") {
+          desc += "=GPIO_NUM";
+        } else if (fDefault !== null && fDefault !== undefined) {
+          desc += "=" + fDefault;
+        }
+        parts.push(desc);
+      }
+      line += " [" + parts.join(", ") + "]";
+    }
+    if (def.children) {
+      var slots = [];
+      for (var c = 0; c < def.children.length; c++) {
+        slots.push(def.children[c].key + ":" + def.children[c].accepts);
+      }
+      line += " children{" + slots.join(", ") + "}";
+    }
+    lines.push(line);
+  }
+  var condLines = [];
+  for (var ck in CONDITION_DEFS) {
+    if (!CONDITION_DEFS.hasOwnProperty(ck)) continue;
+    var cd = CONDITION_DEFS[ck];
+    var cl = "cond_" + ck + " (" + cd.zh + "/" + cd.en + ")";
+    if (cd.fields && cd.fields.length) {
+      var cParts = [];
+      for (var ci = 0; ci < cd.fields.length; ci++) {
+        var cf = cd.fields[ci];
+        var cDesc = cf[0] + ":" + cf[3];
+        if (cf[3] === "select" && cf.length > 4) {
+          var cVals = [];
+          for (var cj = 0; cj < cf[4].length; cj++) cVals.push(cf[4][cj][0]);
+          cDesc += "=" + cVals.join("|");
+        }
+        cParts.push(cDesc);
+      }
+      cl += " [" + cParts.join(", ") + "]";
+    }
+    condLines.push(cl);
+  }
+  return "BLOCKS:\n" + lines.join("\n") + "\n\nCONDITIONS:\n" + condLines.join("\n");
+}
+
+function buildSystemPrompt() {
+  var langName = language === "zh" ? "Chinese" : "English";
+  var targetInfo = "";
+  var globalTarget = getGlobalTarget();
+  if (cachedDevices && cachedDevices.length > 0) {
+    var devList = [];
+    for (var i = 0; i < cachedDevices.length; i++) {
+      var d = cachedDevices[i];
+      var mac = d.id;
+      var macShort = mac.length >= 4 ? mac.substring(mac.length - 4).toUpperCase() : mac.toUpperCase();
+      devList.push(d.id + " [name:" + (d.name || d.id) + " mac尾号:" + macShort + "]");
+    }
+    targetInfo = "\n10. Every block supports an optional \"target\" field in params to send the command to a specific remote device. Available targets: " + devList.join(", ") + ". The user may refer to a device by its name, full id, or last 4 chars of id (MAC suffix). Match the user's reference to the correct device id and use that as the target value. If no device is specified, omit the target field.\n";
+  }
+  return "You are an ESP32 command builder assistant. The user describes what they want to do in natural language, and you convert it into a sequence of code blocks.\n\n" +
+    "RULES:\n" +
+    "1. Return ONLY valid JSON, no markdown, no explanation.\n" +
+    "2. JSON format: {\"blocks\":[{\"type\":\"block_type\",\"params\":{...},\"children\":{...}}]}\n" +
+    "3. Use the exact block type IDs from the schema below.\n" +
+    "4. For pin fields, use valid GPIO numbers (0-48, avoid 33-37).\n" +
+    "5. For children slots, use arrays of child block objects.\n" +
+    "6. Respond in " + langName + " for any text values (labels, messages).\n" +
+    "7. If the user request is unclear, return {\"error\":\"description\"}.\n" +
+    "8. Choose sensible default values for parameters not specified by the user.\n" +
+    "9. For timer/logic/condition blocks that need sub-commands, include them in the children field.\n" +
+    "10. For music/melody: use tone blocks to set frequency, followed by delay blocks to control note duration. Different notes MUST have different delay values based on their duration: whole note=1000ms, half note=500ms, quarter note=250ms, eighth note=125ms. Add a short delay(80ms) with tone freq=0 between notes as gap. Never use the same delay for all notes. Keep melodies short (2-4 phrases max).\n" +
+    targetInfo + "\n" +
+    "EXAMPLES:\n" +
+    "User: \"点亮GPIO2的灯\" -> {\"blocks\":[{\"type\":\"set\",\"params\":{\"pin\":2,\"value\":1}}]}\n" +
+    "User: \"每5秒读取DHT11\" -> {\"blocks\":[{\"type\":\"timer_add\",\"params\":{\"id\":\"t1\",\"type\":\"interval\",\"interval\":5000,\"enabled\":true,\"persistent\":true},\"children\":{\"commands\":[{\"type\":\"sensor_add\",\"params\":{\"pin\":4,\"type\":\"dht11\",\"interval\":5000,\"label\":\"DHT11\",\"persistent\":true}}]}}]}\n" +
+    "User: \"当温度>30时开风扇\" -> {\"blocks\":[{\"type\":\"logic_add\",\"params\":{\"id\":\"fan_ctrl\",\"operator\":\"and\",\"cooldown\":1000,\"enabled\":true,\"persistent\":true},\"children\":{\"conditions\":[{\"type\":\"cond_sensor\",\"params\":{\"source\":\"sensor\",\"pin\":4,\"op\":\"gt\",\"value\":30}}],\"actions\":[{\"type\":\"set\",\"params\":{\"pin\":5,\"value\":1}}]}}]}\n" +
+    "User: \"蜂鸣器GPIO5播放do re mi\" -> {\"blocks\":[{\"type\":\"tone\",\"params\":{\"pin\":5,\"freq\":262}},{\"type\":\"delay\",\"params\":{\"delay\":250}},{\"type\":\"tone\",\"params\":{\"pin\":5,\"freq\":0}},{\"type\":\"delay\",\"params\":{\"delay\":80}},{\"type\":\"tone\",\"params\":{\"pin\":5,\"freq\":294}},{\"type\":\"delay\",\"params\":{\"delay\":250}},{\"type\":\"tone\",\"params\":{\"pin\":5,\"freq\":0}},{\"type\":\"delay\",\"params\":{\"delay\":80}},{\"type\":\"tone\",\"params\":{\"pin\":5,\"freq\":330}},{\"type\":\"delay\",\"params\":{\"delay\":500}}]}\n" +
+    (cachedDevices && cachedDevices.length > 0 ? "User: \"让客厅设备点亮GPIO2\" -> {\"blocks\":[{\"type\":\"set\",\"params\":{\"pin\":2,\"value\":1,\"target\":\"" + cachedDevices[0].id + "\"}}]}\n" : "") +
+    "\nAVAILABLE BLOCKS SCHEMA:\n" + buildBlockSchema();
+}
+
+async function callAI(userInput) {
+  var provider = aiGetProvider();
+  var url = aiGetEffectiveUrl();
+  var model = aiGetEffectiveModel();
+  var headers = { "Content-Type": "application/json" };
+  if (!provider.noKey && aiConfig.apiKey) {
+    headers["Authorization"] = "Bearer " + aiConfig.apiKey;
+  }
+  var body = {
+    model: model,
+    messages: [
+      { role: "system", content: buildSystemPrompt() },
+      { role: "user", content: userInput }
+    ],
+    temperature: 0.3,
+    max_tokens: 4096
+  };
+  if (provider.noKey) {
+    body.jsonMode = true;
+    body.seed = Math.floor(Math.random() * 100000);
+  }
+  var response = await fetch(url, {
+    method: "POST",
+    headers: headers,
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    var errText = "";
+    try { var errData = await response.json(); errText = errData.error ? (errData.error.message || JSON.stringify(errData.error)) : response.statusText; } catch(e) { errText = response.status + " " + response.statusText; }
+    throw new Error(errText);
+  }
+  var data = await response.json();
+  if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+    throw new Error("Invalid API response");
+  }
+  var text = data.choices[0].message.content.trim();
+  var jsonStr = text;
+  var fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) jsonStr = fenceMatch[1].trim();
+  var jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("AI did not return valid JSON");
+  var rawJson = jsonMatch[0];
+  var parsed;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch(e) {
+    parsed = repairTruncatedJson(rawJson);
+    if (!parsed) throw new Error("JSON parse error: " + e.message);
+  }
+  return parsed;
+}
+
+function repairTruncatedJson(json) {
+  var s = json;
+  var openB = 0, openC = 0;
+  for (var i = 0; i < s.length; i++) {
+    if (s[i] === '[') openB++;
+    else if (s[i] === ']') openB--;
+    else if (s[i] === '{') openC++;
+    else if (s[i] === '}') openC--;
+  }
+  var inStr = false, esc = false;
+  for (var i = 0; i < s.length; i++) {
+    if (esc) { esc = false; continue; }
+    if (s[i] === '\\') { esc = true; continue; }
+    if (s[i] === '"') inStr = !inStr;
+  }
+  if (inStr) s += '"';
+  while (openB > 0) { s += ']'; openB--; }
+  while (openC > 0) { s += '}'; openC--; }
+  try { return JSON.parse(s); } catch(e) { return null; }
+}
+
+function aiCreateBlockFromObj(obj) {
+  if (!obj || !obj.type) return null;
+  var block = createBlock(obj.type);
+  if (!block) return null;
+  if (obj.params) {
+    for (var k in obj.params) {
+      if (!obj.params.hasOwnProperty(k)) continue;
+      if (k === "target" && !obj.params[k]) continue;
+      block.params[k] = obj.params[k];
+    }
+  }
+  if (obj.children && block.children) {
+    for (var slotKey in obj.children) {
+      if (!obj.children.hasOwnProperty(slotKey)) continue;
+      if (!block.children[slotKey]) continue;
+      var childArr = obj.children[slotKey];
+      if (!Array.isArray(childArr)) childArr = [childArr];
+      for (var i = 0; i < childArr.length; i++) {
+        var childBlock = aiCreateBlockFromObj(childArr[i]);
+        if (childBlock) block.children[slotKey].push(childBlock);
+      }
+    }
+  }
+  return block;
+}
+
+async function aiSend() {
+  var input = document.getElementById("aiInput");
+  var btn = document.getElementById("aiSendBtn");
+  if (!input) return;
+  var text = input.value.trim();
+  if (!text) return;
+
+  if (!aiConfig.apiKey && !aiGetProvider().noKey) {
+    showAISettings();
+    aiSetStatus(translate("请先配置API Key", "Set API Key first"), "err");
+    return;
+  }
+
+  if (aiBusy) return;
+  aiBusy = true;
+  btn.disabled = true;
+  input.disabled = true;
+  aiSetStatus(translate("AI思考中...", "AI thinking..."), "loading");
+
+  try {
+    var result = await callAI(text);
+
+    if (result.error) {
+      aiSetStatus(result.error, "err");
+      showToast(result.error, "err");
+      aiBusy = false;
+      btn.disabled = false;
+      input.disabled = false;
+      input.focus();
+      return;
+    }
+
+    if (!result.blocks || !Array.isArray(result.blocks) || result.blocks.length === 0) {
+      aiSetStatus(translate("AI未返回有效代码块", "AI returned no blocks"), "err");
+      showToast(translate("AI未返回有效代码块", "No blocks returned"), "err");
+      aiBusy = false;
+      btn.disabled = false;
+      input.disabled = false;
+      input.focus();
+      return;
+    }
+
+    var addedCount = 0;
+    for (var i = 0; i < result.blocks.length; i++) {
+      var block = aiCreateBlockFromObj(result.blocks[i]);
+      if (block) {
+        blockTree.push(block);
+        addedCount++;
+      }
+    }
+
+    if (addedCount > 0) {
+      selectedBlockId = null;
+      renderCanvas();
+      updateJsonPreview();
+      aiSetStatus(translate("已添加 " + addedCount + " 个代码块", "Added " + addedCount + " block(s)"), "ok");
+      showToast(translate("AI已添加 " + addedCount + " 个代码块", "AI added " + addedCount + " block(s)"), "ok");
+      input.value = "";
+    } else {
+      aiSetStatus(translate("无法解析AI返回的代码块", "Could not parse AI blocks"), "err");
+      showToast(translate("解析失败", "Parse failed"), "err");
+    }
+  } catch(e) {
+    var errMsg = e.message || String(e);
+    aiSetStatus(errMsg, "err");
+    showToast(translate("AI调用失败", "AI call failed"), "err");
+    addLogMessage("AI Error: " + errMsg, "error");
+  }
+
+  aiBusy = false;
+  btn.disabled = false;
+  input.disabled = false;
+  input.focus();
+}
+
+function showAISettings() {
+  var html = '<div class="modal-title">🤖 ' + translate("AI 助手设置", "AI Assistant Settings") + '</div>';
+
+  html += '<div class="ai-modal-group">';
+  html += '<label>' + translate("服务商", "Provider") + '</label>';
+  html += '<select id="aiProviderSelect" onchange="onAIProviderChange()">';
+  for (var key in AI_PROVIDERS) {
+    if (!AI_PROVIDERS.hasOwnProperty(key)) continue;
+    var p = AI_PROVIDERS[key];
+    var sel = key === aiConfig.provider ? " selected" : "";
+    var tag = p.noKey ? " (Free)" : "";
+    html += '<option value="' + key + '"' + sel + '>' + p.name + tag + '</option>';
+  }
+  html += '</select>';
+  html += '</div>';
+
+  var curProvider = aiGetProvider();
+
+  html += '<div class="ai-modal-group" id="aiNoKeyHint" style="' + (curProvider.noKey ? '' : 'display:none') + '">';
+  html += '<div style="padding:8px 10px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:6px;font-size:10px;color:var(--green);line-height:1.5">';
+  html += '✅ ' + translate("无需API Key，开箱即用", "No API Key needed, ready to use");
+  html += '<br>⚠️ ' + translate("匿名限速：约15秒/次请求", "Rate limit: ~1 request per 15s");
+  html += '</div></div>';
+
+  html += '<div id="aiCustomGroup" style="' + (curProvider.noKey ? 'display:none' : '') + '">';
+  html += '<div class="ai-modal-group">';
+  html += '<label>API URL</label>';
+  html += '<input type="text" id="aiCustomUrl" value="' + escapeHtml(aiConfig.customUrl || curProvider.url) + '" placeholder="https://api.openai.com/v1/chat/completions">';
+  html += '<div class="ai-hint">' + translate("兼容OpenAI /chat/completions 格式", "OpenAI /chat/completions compatible") + '</div>';
+  html += '</div>';
+  html += '<div class="ai-modal-group">';
+  html += '<label>API Key</label>';
+  html += '<input type="password" id="aiApiKeyInput" value="' + escapeHtml(aiConfig.apiKey) + '" placeholder="sk-...">';
+  html += '</div>';
+  html += '<div class="ai-modal-group">';
+  html += '<label>' + translate("模型", "Model") + '</label>';
+  html += '<input type="text" id="aiCustomModel" value="' + escapeHtml(aiConfig.customModel || curProvider.model) + '" placeholder="' + curProvider.model + '">';
+  html += '</div>';
+  html += '</div>';
+
+  html += '<button class="btn btn-primary" style="width:100%;margin-top:4px" onclick="saveAISettings()">' + translate("保存", "Save") + '</button>';
+  html += '<button class="modal-close" onclick="hideModal()">' + translate("关闭", "Close") + '</button>';
+
+  showModal(html);
+}
+
+function onAIProviderChange() {
+  var sel = document.getElementById("aiProviderSelect");
+  var key = sel ? sel.value : aiConfig.provider;
+  var p = AI_PROVIDERS[key];
+  if (!p) return;
+  var noKeyHint = document.getElementById("aiNoKeyHint");
+  var customGroup = document.getElementById("aiCustomGroup");
+  if (p.noKey) {
+    if (noKeyHint) noKeyHint.style.display = "";
+    if (customGroup) customGroup.style.display = "none";
+  } else {
+    if (noKeyHint) noKeyHint.style.display = "none";
+    if (customGroup) customGroup.style.display = "";
+    var urlInput = document.getElementById("aiCustomUrl");
+    if (urlInput && !urlInput.value) urlInput.value = p.url;
+    var modelInput = document.getElementById("aiCustomModel");
+    if (modelInput && !modelInput.value) modelInput.value = p.model;
+  }
+}
+
+function saveAISettings() {
+  var providerSel = document.getElementById("aiProviderSelect");
+  var apiKeyInput = document.getElementById("aiApiKeyInput");
+  var customUrl = document.getElementById("aiCustomUrl");
+  var customModel = document.getElementById("aiCustomModel");
+
+  if (providerSel) {
+    aiConfig.provider = providerSel.value;
+    localStorage.setItem("ai_provider", aiConfig.provider);
+  }
+  if (apiKeyInput) {
+    aiConfig.apiKey = apiKeyInput.value.trim();
+    localStorage.setItem("ai_apikey", aiConfig.apiKey);
+  }
+  if (customUrl) {
+    aiConfig.customUrl = customUrl.value.trim();
+    localStorage.setItem("ai_custom_url", aiConfig.customUrl);
+  }
+  if (customModel) {
+    aiConfig.customModel = customModel.value.trim();
+    localStorage.setItem("ai_custom_model", aiConfig.customModel);
+  }
+
+  aiUpdateBadge();
+  hideModal();
+  showToast(translate("AI设置已保存", "AI settings saved"), "ok");
+  addLogMessage(translate("AI配置: " + aiGetProvider().name, "AI: " + aiGetProvider().name), "ok");
 }
 
 /* ============================================================
