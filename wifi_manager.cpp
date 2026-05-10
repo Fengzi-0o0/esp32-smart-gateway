@@ -19,15 +19,14 @@ static void onWiFiEvent(WiFiEvent_t event) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:
             staConnected = true;
-            Serial.print("[WIFI] STA Connected - IP: ");
-            Serial.println(WiFi.localIP());
+            MqttClient::publishLog("info", "WIFI", "STA Connected - IP: %s", WiFi.localIP().toString().c_str());
             WifiManager::startUdpDiscovery();
             if (staEventCb) staEventCb(true);
             break;
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
             staConnected = false;
             udpStarted = false;
-            Serial.println("[WIFI] STA Disconnected, will retry...");
+            MqttClient::publishLog("warn", "WIFI", "STA Disconnected, will retry...");
             if (staEventCb) staEventCb(false);
             break;
         default:
@@ -106,7 +105,7 @@ void handleUdpDiscovery() {
     int packetSize = udp.parsePacket();
     if (packetSize == 0) return;
 
-    char buf[256];
+    char buf[512];
     int len = udp.read(buf, sizeof(buf) - 1);
     if (len <= 0) return;
     buf[len] = '\0';
@@ -127,6 +126,13 @@ void handleUdpDiscovery() {
             Serial.printf("[UDP] Registered from response: %s (%s) @ %s\n",
                           senderId.c_str(), senderName.c_str(),
                           udp.remoteIP().toString().c_str());
+            if (req.containsKey("remoteDevices")) {
+                for (JsonObject rd : req["remoteDevices"].as<JsonArray>()) {
+                    String rId = rd["id"] | String("");
+                    String rName = rd["name"] | String("");
+                    DualChannel::registerRemoteDevice(rId, rName, senderId);
+                }
+            }
         }
         return;
     }
@@ -152,6 +158,18 @@ void handleUdpDiscovery() {
     resp["uptime"]        = millis() / 1000;
     resp["batchInterval"] = config.batchInterval;
     resp["mac"]           = WiFi.macAddress();
+
+    JsonArray remotes = resp["remoteDevices"].to<JsonArray>();
+    for (int i = 0; i < DualChannel::getDeviceCount(); i++) {
+        DeviceEntry *dev = DualChannel::getDeviceByIndex(i);
+        if (!dev) continue;
+        if (!dev->mqttOnline) continue;
+        if (dev->lanOnline) continue;
+        if (dev->via.length() > 0) continue;
+        JsonObject ro = remotes.add<JsonObject>();
+        ro["id"] = dev->deviceId;
+        ro["name"] = dev->deviceName;
+    }
 
     String response;
     serializeJson(resp, response);

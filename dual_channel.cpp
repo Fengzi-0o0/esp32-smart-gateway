@@ -223,7 +223,7 @@ void loop() {
   for (int i = 0; i < devCount; i++) {
     if (devices[i].lanOnline && (now - devices[i].lastLanSeen > DC_DEVICE_TIMEOUT)) {
       devices[i].lanOnline = false;
-      Serial.printf("[DC] %s LAN timeout\n", devices[i].deviceName.c_str());
+      MqttClient::publishLog("warn", "DC", "%s LAN timeout", devices[i].deviceName.c_str());
     }
   }
 
@@ -231,7 +231,7 @@ void loop() {
   for (int i = 0; i < devCount; i++) {
     if (devices[i].mqttOnline && (now - devices[i].lastMqttSeen > DC_DEVICE_TIMEOUT)) {
       devices[i].mqttOnline = false;
-      Serial.printf("[DC] %s MQTT timeout\n", devices[i].deviceName.c_str());
+      MqttClient::publishLog("warn", "DC", "%s MQTT timeout", devices[i].deviceName.c_str());
     }
   }
 }
@@ -247,6 +247,7 @@ void registerDevice(const String &id, const String &name,
       devices[i].port = port;
       devices[i].lastLanSeen = millis();
       devices[i].lanOnline = true;
+      devices[i].via = "";
       return;
     }
   }
@@ -260,8 +261,38 @@ void registerDevice(const String &id, const String &name,
     d.lastMqttSeen = 0;
     d.lanOnline = true;
     d.mqttOnline = false;
+    d.via = "";
     Serial.printf("[DC] Registered: %s (%s) @ %s:%u\n",
                   id.c_str(), name.c_str(), ip.c_str(), port);
+  }
+}
+
+void registerRemoteDevice(const String &id, const String &name,
+                          const String &viaId) {
+  if (id.length() == 0 || id == getDeviceId()) return;
+  for (int i = 0; i < devCount; i++) {
+    if (devices[i].deviceId == id) {
+      if (devices[i].lanOnline || devices[i].mqttOnline) return;
+      devices[i].deviceName = name;
+      devices[i].via = viaId;
+      Serial.printf("[DC] Remote updated: %s (%s) via %s\n",
+                    id.c_str(), name.c_str(), viaId.c_str());
+      return;
+    }
+  }
+  if (devCount < DC_MAX_DEVICES) {
+    DeviceEntry &d = devices[devCount++];
+    d.deviceId = id;
+    d.deviceName = name;
+    d.ip = "";
+    d.port = 0;
+    d.lastLanSeen = 0;
+    d.lastMqttSeen = 0;
+    d.lanOnline = false;
+    d.mqttOnline = false;
+    d.via = viaId;
+    MqttClient::publishLog("info", "DC", "Remote: %s (%s) via %s",
+                  id.c_str(), name.c_str(), viaId.c_str());
   }
 }
 
@@ -310,6 +341,14 @@ RouteChannel decideRoute(DeviceEntry *dev) {
   bool lanOk = dev->lanOnline && dev->ip.length() > 0 && (millis() - dev->lastLanSeen < DC_DEVICE_TIMEOUT);
   if (lanOk) return ROUTE_LAN;
   if (dev->mqttOnline && MqttClient::isConnected()) return ROUTE_MQTT;
+  if (dev->via.length() > 0) {
+    DeviceEntry *relay = findDevice(dev->via);
+    if (relay) {
+      bool relayLan = relay->lanOnline && relay->ip.length() > 0 && (millis() - relay->lastLanSeen < DC_DEVICE_TIMEOUT);
+      bool relayMqtt = relay->mqttOnline && MqttClient::isConnected();
+      if (relayLan || relayMqtt) return ROUTE_RELAY;
+    }
+  }
   if (MqttClient::isConnected()) return ROUTE_MQTT;
   return ROUTE_NONE;
 }
@@ -350,7 +389,7 @@ bool sendToTarget(const String &target, const String &json) {
         // —— 冷却结束，尝试 LAN ——
         lastLanAttempt = millis();
         ok = LanClient::sendToDevice(dev->ip, dev->port ? dev->port : 8080, json);
-        Serial.printf("[DC] LAN→ %s (%s)\n", target.c_str(), ok ? "OK" : "FAIL");
+        MqttClient::publishLog("info", "DC", "LAN→ %s (%s)", target.c_str(), ok ? "OK" : "FAIL");
 
         if (ok) {
           // 成功：重置失败计数，LAN 优先恢复
@@ -365,17 +404,42 @@ bool sendToTarget(const String &target, const String &json) {
           // 回退 MQTT
           if (MqttClient::isConnected()) {
             ok = MqttClient::publish(json);
-            Serial.printf("[DC] Fallback MQTT→ %s\n", target.c_str());
+            MqttClient::publishLog("info", "DC", "Fallback MQTT→ %s", target.c_str());
           }
         }
         break;
       }
     case ROUTE_MQTT:
       ok = MqttClient::publish(json);
-      Serial.printf("[DC] MQTT→ %s\n", target.c_str());
+      MqttClient::publishLog("info", "DC", "MQTT→ %s", target.c_str());
       break;
+    case ROUTE_RELAY:
+      {
+        DeviceEntry *relay = findDevice(dev->via);
+        if (!relay) {
+          MqttClient::publishLog("warn", "DC", "Relay %s not found for %s", dev->via.c_str(), target.c_str());
+          break;
+        }
+        bool relayLan = relay->lanOnline && relay->ip.length() > 0 && (millis() - relay->lastLanSeen < DC_DEVICE_TIMEOUT);
+        if (relayLan) {
+          ok = LanClient::sendToDevice(relay->ip, relay->port ? relay->port : 8080, json);
+          MqttClient::publishLog("info", "DC", "RELAY LAN→ %s via %s (%s)",
+                        target.c_str(), dev->via.c_str(), ok ? "OK" : "FAIL");
+          if (!ok && MqttClient::isConnected()) {
+            ok = MqttClient::publish(json);
+            MqttClient::publishLog("info", "DC", "RELAY fallback MQTT→ %s via %s", target.c_str(), dev->via.c_str());
+          }
+        } else if (relay->mqttOnline && MqttClient::isConnected()) {
+          ok = MqttClient::publish(json);
+          MqttClient::publishLog("info", "DC", "RELAY MQTT→ %s via %s (%s)",
+                        target.c_str(), dev->via.c_str(), ok ? "OK" : "FAIL");
+        } else {
+          MqttClient::publishLog("warn", "DC", "RELAY OFFLINE: %s (relay %s down)", target.c_str(), dev->via.c_str());
+        }
+        break;
+      }
     case ROUTE_NONE:
-      Serial.printf("[DC] OFFLINE: %s\n", target.c_str());
+      MqttClient::publishLog("warn", "DC", "OFFLINE: %s", target.c_str());
       break;
   }
 
@@ -406,11 +470,10 @@ bool broadcastAll(const String &json) {
       if (LanClient::sendToDevice(devices[i].ip,
                                   devices[i].port ? devices[i].port : 8080, json))
         anySent = true;
-    } else if (route == ROUTE_MQTT) {
+    } else if (route == ROUTE_MQTT || route == ROUTE_RELAY) {
       if (MqttClient::publish(json)) anySent = true;
     }
   }
-  // 兜底：发一份无 target 的 MQTT
   if (MqttClient::publish(json)) anySent = true;
   return anySent;
 }
@@ -464,9 +527,10 @@ String toJson() {
     o["mqtt"] = devices[i].mqttOnline;
     o["lanAge"] = devices[i].lastLanSeen ? (int)((millis() - devices[i].lastLanSeen) / 1000) : -1;
     o["mqttAge"] = devices[i].lastMqttSeen ? (int)((millis() - devices[i].lastMqttSeen) / 1000) : -1;
+    if (devices[i].via.length() > 0) o["via"] = devices[i].via;
     RouteChannel r = decideRoute(&devices[i]);
     o["route"] = (r == ROUTE_LAN) ? "lan" : (r == ROUTE_MQTT) ? "mqtt"
-                                                              : "none";
+                  : (r == ROUTE_RELAY) ? "relay" : "none";
   }
   String json;
   serializeJson(doc, json);

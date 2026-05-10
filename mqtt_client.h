@@ -12,6 +12,7 @@ namespace MqttClient {
     bool publish(const String &topic, const String &payload, uint8_t qos = 0);
     void publish(const char* topic, const char* payload);
     void publish(const char* topic, const uint8_t* payload, unsigned int length);
+    void publishLog(const char *level, const char *tag, const char *fmt, ...);
 }
 
 #endif

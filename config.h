@@ -20,12 +20,13 @@
 #define MAX_UART_PORTS      2
 #define MAX_SPI_PORTS       2
 #define MAX_TOUCH_PINS      10
-#define FIRMWARE_VERSION    "1.0.1fix35"  // 版本号更新
+#define FIRMWARE_VERSION    "1.0.1fix37"  // 版本号更新
 #define UDP_DISCOVERY_PORT  4210
 #define OTA_CHUNK_SIZE      1024
 
 #define MQTT_OTA_TOPIC          "esp32/ota"
 #define MQTT_OTA_REPORT_TOPIC   "esp32/ota/status"
+#define MQTT_LOG_TOPIC          "esp32/log"
 
 struct TopicEntry {
     String topic;

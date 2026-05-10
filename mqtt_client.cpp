@@ -250,7 +250,7 @@ static void handleSensorCommand(JsonDocument &doc) {
     bool persist = doc["persistent"] | false;  // 新增
 
     if (s.pin >= 0 && !isValidExternalPin(s.pin)) {
-      Serial.printf("[SENSOR] REJECTED: pin=%d not in external pinout\n", s.pin);
+      MqttClient::publishLog("warn", "SENSOR", "REJECTED: pin=%d not in external pinout", s.pin);
       return;
     }
 
@@ -378,7 +378,7 @@ static void handleInputCommand(JsonDocument &doc) {
     bool persist = doc["persistent"] | false;  // 新增
 
     if (t.pin >= 0 && !isValidExternalPin(t.pin)) {
-      Serial.printf("[INPUT] REJECTED: pin=%d not in external pinout\n", t.pin);
+      MqttClient::publishLog("warn", "INPUT", "REJECTED: pin=%d not in external pinout", t.pin);
       return;
     }
 
@@ -387,7 +387,7 @@ static void handleInputCommand(JsonDocument &doc) {
     if (t.pin >= 0 && config.inputs.size() < MAX_INPUTS) {
       int cm = GpioControl::getPinMode(t.pin);
       if (cm == OUTPUT) {
-        Serial.printf("[INPUT] REJECTED: pin=%d is OUTPUT\n", t.pin);
+        MqttClient::publishLog("warn", "INPUT", "REJECTED: pin=%d is OUTPUT", t.pin);
       } else {
         pinMode(t.pin, t.mode);
         t.lastValue = digitalRead(t.pin);
@@ -743,15 +743,21 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
       if (!matchId && !matchName) {
         String cmdCheck = doc["cmd"].as<String>();
         if (cmdCheck == "forward") {
-          // 不做任何事，让代码继续往下走�?forward 处理�?
         } else {
+          int hops = doc["_hops"] | 0;
+          if (hops >= DC_MAX_HOPS) {
+            MqttClient::publishLog("warn", "CMD", "Hop limit (%d), drop forward to %s", hops, t.c_str());
+            return;
+          }
+          doc["_hops"] = hops + 1;
+          if (!doc.containsKey("_mid") || doc["_mid"].as<String>().length() == 0) {
+            char midBuf[8];
+            snprintf(midBuf, sizeof(midBuf), "%04X", (uint16_t)(esp_random() & 0xFFFF));
+            doc["_mid"] = midBuf;
+          }
           String json;
           serializeJson(doc, json);
-          if (fromMqtt) {
-            DualChannel::sendToTargetLan(t, json);
-          } else {
-            DualChannel::sendToTarget(t, json);
-          }
+          DualChannel::sendToTarget(t, json);
           return;
         }
       }
@@ -764,7 +770,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
 
     int pin = doc["pin"] | -1;
     if (pin >= 0 && !isValidExternalPin(pin)) {
-      Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
+      MqttClient::publishLog("warn", "GPIO", "REJECTED: pin=%d not in external pinout", pin);
       return;
     }
     int value = 0;
@@ -783,7 +789,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
   } else if (cmd == "toggle") {
     int pin = doc["pin"] | -1;
     if (pin >= 0 && !isValidExternalPin(pin)) {
-      Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
+      MqttClient::publishLog("warn", "GPIO", "REJECTED: pin=%d not in external pinout", pin);
       return;
     }
     if (pin >= 0) {
@@ -794,7 +800,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
   } else if (cmd == "mode") {
     int pin = doc["pin"] | -1;
     if (pin >= 0 && !isValidExternalPin(pin)) {
-      Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
+      MqttClient::publishLog("warn", "GPIO", "REJECTED: pin=%d not in external pinout", pin);
       return;
     }
     String modeStr = doc["mode"].as<String>();
@@ -809,7 +815,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
   } else if (cmd == "pwm") {
     int pin = doc["pin"] | -1;
     if (pin >= 0 && !isValidExternalPin(pin)) {
-      Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
+      MqttClient::publishLog("warn", "GPIO", "REJECTED: pin=%d not in external pinout", pin);
       return;
     }
     int value = 0;
@@ -982,7 +988,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
   } else if (cmd == "servo") {
     int pin = doc["pin"] | -1;
     if (pin >= 0 && !isValidExternalPin(pin)) {
-      Serial.printf("[GPIO] REJECTED: pin=%d not in external pinout\n", pin);
+      MqttClient::publishLog("warn", "GPIO", "REJECTED: pin=%d not in external pinout", pin);
       return;
     }
     int angle = doc["angle"] | 90;
@@ -1004,7 +1010,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
   } else if (cmd == "servo_detach") {
     int pin = doc["pin"] | -1;
     if (pin >= 0 && !isValidExternalPin(pin)) {
-      Serial.printf("[GPIO] REJECTED: servo_detach pin=%d\n", pin);
+      MqttClient::publishLog("warn", "GPIO", "REJECTED: servo_detach pin=%d", pin);
       return;
     }
     if (pin >= 0) {
@@ -1032,12 +1038,12 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
   else if (cmd == "pulse_in") {
     int pin = doc["pin"] | -1;
     if (pin < 0 || !isValidExternalPin(pin)) {
-      Serial.println("[PULSE] REJECTED: invalid pin");
+      MqttClient::publishLog("warn", "PULSE", "REJECTED: invalid pin");
       return;
     }
     int trigPin = doc["trig"] | -1;
     if (trigPin >= 0 && !isValidExternalPin(trigPin)) {
-      Serial.printf("[PULSE] REJECTED: trig=%d\n", trigPin);
+      MqttClient::publishLog("warn", "PULSE", "REJECTED: trig=%d", trigPin);
       return;
     }
     String state = doc["state"] | String("high");
@@ -1074,7 +1080,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
   else if (cmd == "tone") {
     int pin = doc["pin"] | -1;
     if (pin < 0 || !isValidExternalPin(pin)) {
-      Serial.printf("[TONE] REJECTED: pin=%d\n", pin);
+      MqttClient::publishLog("warn", "TONE", "REJECTED: pin=%d", pin);
       return;
     }
     unsigned int freq = doc["freq"] | 0;
@@ -1697,7 +1703,7 @@ static void handleCommand(JsonDocument &doc, bool fromMqtt) {
       Serial.printf("[MODULE] Unknown action: %s\n", action.c_str());
     }
   }else {
-    Serial.printf("[GPIO] Unknown cmd: %s\n", cmd.c_str());
+    MqttClient::publishLog("warn", "GPIO", "Unknown cmd: %s", cmd.c_str());
   }
   // ===== ACK 响应 =====
   if (doc.containsKey("_mid")) {
@@ -2227,7 +2233,7 @@ void loop() {
         }
 
         if (ok) {
-          Serial.println("[MQTT] Connected!");
+          publishLog("info", "MQTT", "Connected!");
           connected = true;
           mqttState = MQTT_LINKED;
           mqttReconnectBackoff = 2000;
@@ -2283,7 +2289,7 @@ void disconnect() {
   mqttState = MQTT_IDLE;
   mqttStateTime = millis();
   mqttReconnectBackoff = 2000;
-  Serial.println("[MQTT] Disconnected");
+  publishLog("warn", "MQTT", "Disconnected");
 }
 
 void publish(const char *topic, const char *payload) {
@@ -2311,6 +2317,35 @@ bool publish(const String &topic, const String &payload, uint8_t qos) {
     _wsSend(_wsClient, payload.c_str());
   }
   return mqttClient.connected();
+}
+
+void publishLog(const char *level, const char *tag, const char *fmt, ...) {
+  char buf[192];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+
+  Serial.printf("[%s] %s\n", tag, buf);
+
+  if (!mqttClient.connected() && _wsClient == 0xFF) return;
+
+  JsonDocument doc;
+  doc["type"] = "log";
+  doc["deviceId"] = getDeviceId();
+  doc["level"] = level;
+  doc["tag"] = tag;
+  doc["msg"] = buf;
+  doc["ts"] = millis();
+  String json;
+  serializeJson(doc, json);
+
+  if (mqttClient.connected()) {
+    mqttClient.publish(MQTT_LOG_TOPIC, json.c_str());
+  }
+  if (_wsClient != 0xFF && _wsSend) {
+    _wsSend(_wsClient, json.c_str());
+  }
 }
 
 

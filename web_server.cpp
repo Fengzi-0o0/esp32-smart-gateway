@@ -177,7 +177,7 @@ static void handlePostConfig() {
       t.topic = o["topic"].as<String>();
       t.qos = o["qos"] | 0;
       if (t.topic.length() > 0) {
-        if (t.topic == MQTT_OTA_TOPIC) {
+        if (t.topic == MQTT_OTA_TOPIC || t.topic == MQTT_LOG_TOPIC) {
           Serial.printf("[WEB] REJECTED sub topic: %s (reserved)\n", t.topic.c_str());
           continue;
         }
@@ -195,7 +195,7 @@ static void handlePostConfig() {
       t.topic = o["topic"].as<String>();
       t.qos = o["qos"] | 0;
       if (t.topic.length() > 0) {
-        if (t.topic == MQTT_OTA_TOPIC) {
+        if (t.topic == MQTT_OTA_TOPIC || t.topic == MQTT_LOG_TOPIC) {
           Serial.printf("[WEB] REJECTED pub topic: %s (reserved)\n", t.topic.c_str());
           continue;
         }
@@ -478,6 +478,8 @@ static void handleOtaPage() {
 }
 
 static void wsOtaEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
+  extern void setResultSink(uint8_t, void (*)(uint8_t, const char *));
+  extern void clearResultSink();
   switch (type) {
     case WStype_DISCONNECTED:
       Serial.printf("[OTA-WS] Client #%u disconnected\n", num);
@@ -485,6 +487,7 @@ static void wsOtaEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t leng
         Update.abort();
         otaInProgress = false;
       }
+      clearResultSink();
       break;
 
     case WStype_CONNECTED:
@@ -494,6 +497,7 @@ static void wsOtaEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t leng
         Update.abort();
         otaInProgress = false;
       }
+      setResultSink(num, wsResultForward);
       wsOta.sendTXT(num, "CONNECTED");
       break;
 
@@ -556,10 +560,7 @@ static void wsOtaEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t leng
           DeserializationError err = deserializeJson(doc, msg);
           if (!err) {
             extern void executeCommand(JsonDocument & doc);
-            extern void setResultSink(uint8_t, void (*)(uint8_t, const char *));
-            setResultSink(num, wsResultForward);
             executeCommand(doc);
-            setResultSink(0xFF, nullptr);
             Serial.printf("[WS-CMD] Executed from client #%u\n", num);
             wsOta.sendTXT(num, "{\"type\":\"ws_ack\",\"status\":\"ok\"}");
           } else {

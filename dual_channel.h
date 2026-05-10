@@ -11,6 +11,7 @@
 #define DC_DISCOVER_MS   30000
 #define DC_DEVICE_TIMEOUT 120000
 #define DC_MQTT_HEARTBEAT_MS 60000
+#define DC_MAX_HOPS          2
 
 struct DeviceEntry {
     String deviceId;
@@ -21,6 +22,7 @@ struct DeviceEntry {
     unsigned long lastMqttSeen;
     bool lanOnline;
     bool mqttOnline;
+    String via;
 };
 
 struct PendingMsg {
@@ -32,7 +34,7 @@ struct PendingMsg {
     bool active;
 };
 
-enum RouteChannel { ROUTE_LAN, ROUTE_MQTT, ROUTE_NONE };
+enum RouteChannel { ROUTE_LAN, ROUTE_MQTT, ROUTE_RELAY, ROUTE_NONE };
 
 // ===== LAN WebSocket 客户端（纯传输层） =====
 namespace LanClient {
@@ -46,6 +48,8 @@ namespace DualChannel {
 
     void registerDevice(const String &id, const String &name,
                         const String &ip, uint16_t port);
+    void registerRemoteDevice(const String &id, const String &name,
+                              const String &viaId);
     void updateMqttStatus(const String &id, bool online, const String &name = "");
     DeviceEntry* findDevice(const String &query);
     int  getDeviceCount();

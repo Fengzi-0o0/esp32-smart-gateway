@@ -58,7 +58,7 @@ void DeviceConfig::load() {
 
   staSsid = prefs.getString("s_ssid", "");
   staPass = prefs.getString("s_pass", "");
-  apHidden = prefs.getBool("ap_hidden", true);
+  apHidden = prefs.getBool("ap_hidden", false);
   mqttHost = prefs.getString("m_host", "");
   mqttPort = prefs.getUShort("m_port", DEFAULT_MQTT_PORT);
   mqttUser = prefs.getString("m_user", "");
@@ -405,7 +405,7 @@ void DeviceConfig::reset() {
   prefs.end();
   staSsid = "";
   staPass = "";
-  apHidden = true;
+  apHidden = false;
   mqttHost = "";
   mqttPort = DEFAULT_MQTT_PORT;
   mqttUser = "";
